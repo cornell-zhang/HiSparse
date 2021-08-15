@@ -7,7 +7,7 @@
 *.log
 *.jou
 *_x.*
-*_build_dir.*
+*build_dir.*
 emconfig.json
 .run
 
