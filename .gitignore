@@ -1,0 +1,21 @@
+# vscode config
+.vscode
+
+# vitis build/run temp dirs/files
+.ipcache
+.Xil
+*.log
+*.jou
+*_x.*
+*_build_dir.*
+emconfig.json
+.run
+
+# csim temp dirs
+spmv_csim/csim_headers
+
+# complied host programs
+spmv_csim/csim
+sw/benchmark
+sw/host
+unit_tests/test_pe
