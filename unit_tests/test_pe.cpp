@@ -44,78 +44,22 @@ typedef struct {
 } test_pld_t;
 
 
-//--------------------------------------------------------------------------------------------------
-// reference and verify utils
-//--------------------------------------------------------------------------------------------------
-VAL_T mul_ref(
-    VAL_T a,
-    VAL_T b,
-    const VAL_T z,
-    const char op
-) {
-    VAL_T out;
-    switch (op) {
-        case MULADD:
-            out = a * b;
-            break;
-        case ANDOR:
-            out = a && b;
-            break;
-        case ADDMIN:
-            out = a + b;
-            break;
-        default:
-            out = z;  // z is the zero value in this semiring
-            break;
-    }
-    return out;
-}
-
-#define MIN(a, b) ((a < b)? a : b)
-VAL_T add_ref(
-    VAL_T a,
-    VAL_T b,
-    const char op
-) {
-    VAL_T out;
-    switch (op) {
-        case MULADD:
-            out = a + b;
-            break;
-        case ANDOR:
-            out = a || b;
-            break;
-        case ADDMIN:
-            out = MIN(a, b);
-            break;
-        default:
-            out = a;
-            break;
-    }
-    return out;
-}
 void compute_ref(std::vector<test_pld_t> &test_input,
-                 std::vector<VAL_T> &ref_result_host,
-                 VAL_T zero,
-                 char op
+                 std::vector<VAL_T> &ref_result_host
 ) {
     // output buffer
     VAL_T output_buffer[BANK_SIZE];
 
     // reset output buffer
     for (unsigned i = 0; i < BANK_SIZE; i++) {
-        output_buffer[i] = zero;
+        output_buffer[i] = 0;
     }
 
     // compute
     for (unsigned i = 0; i < TEST_LEN; i++) {
-        VAL_T incr = mul_ref(
-            test_input[i].mat_val,
-            test_input[i].vec_val,
-            zero, op
-        );
+        VAL_T incr = test_input[i].mat_val * test_input[i].vec_val;
         VAL_T q = output_buffer[test_input[i].row_idx];
-        VAL_T new_q = add_ref(q, incr, op);
+        VAL_T new_q = q + incr;
         output_buffer[test_input[i].row_idx] = new_q;
     }
 
@@ -155,9 +99,7 @@ bool verify(std::vector<VAL_T> reference_results,
 // test harness
 //--------------------------------------------------------------------------------------------------
 bool _test_pe(
-    std::vector<test_pld_t> &test_input,
-    VAL_T zero,
-    char op
+    std::vector<test_pld_t> &test_input
 ) {
     // set up runtime
     cl_int err;
@@ -199,7 +141,7 @@ bool _test_pe(
     // prepare space for results
     std::vector<VAL_T, aligned_allocator<VAL_T>> kernel_result;
     kernel_result.resize(BANK_SIZE);
-    std::fill(kernel_result.begin(), kernel_result.end(), zero);
+    std::fill(kernel_result.begin(), kernel_result.end(), 0);
 
     // allocate memory
     std::cout << "Allocating memory on device..." << std::endl;
@@ -260,7 +202,6 @@ bool _test_pe(
     OCL_CHECK(err, err = kernel.setArg(1, test_mat_buf));
     OCL_CHECK(err, err = kernel.setArg(2, test_vec_buf));
     OCL_CHECK(err, err = kernel.setArg(3, kernel_result_buf));
-    OCL_CHECK(err, err = kernel.setArg(4, op));
 
     // launch kernel
     std::cout << "Invoking test bench..." << std::endl;
@@ -275,8 +216,8 @@ bool _test_pe(
     // compute reference
     std::vector<VAL_T> ref_result;
     ref_result.resize(BANK_SIZE);
-    std::fill(ref_result.begin(), ref_result.end(), zero);
-    compute_ref(test_input, ref_result, zero, op);
+    std::fill(ref_result.begin(), ref_result.end(), 0);
+    compute_ref(test_input, ref_result);
 
     // verify
     return verify(ref_result, kernel_result);
@@ -292,33 +233,54 @@ void testcase_gen(
     int distance,
     std::vector<test_pld_t> &test_input
 ) {
-    IDX_T bank_address[TEST_LEN];
-    VAL_T mat_vals[TEST_LEN];
-    VAL_T vec_vals[TEST_LEN];
-
-    for (size_t j = 0; j < TEST_LEN; j++) {
-        if (distance < 0) {
-            bank_address[j] = j % BANK_SIZE;
-        } else {
-            bank_address[j] = j % distance;
-        }
-        mat_vals[j] = 1;
-        vec_vals[j] = 1;
-    }
-
     test_input.resize(TEST_LEN);
     for (size_t j = 0; j < TEST_LEN; j++) {
-        test_input[j].mat_val = mat_vals[j];
-        test_input[j].vec_val = vec_vals[j];
-        test_input[j].row_idx = bank_address[j];
+        if (distance < 0) {
+            test_input[j].row_idx = j % BANK_SIZE;
+        } else {
+            test_input[j].row_idx = j % distance;
+        }
+        test_input[j].mat_val = 1;
+        test_input[j].vec_val = 1;
     }
 }
 
-bool test_muladd_nodep() {
+bool test_nodep() {
     std::cout << "------ Running test: no dependence " << std::endl;
     std::vector<test_pld_t> test_input;
     testcase_gen(-1, test_input);
-    if (_test_pe(test_input, MulAddZero, MULADD)) {
+    if (_test_pe(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
+}
+
+bool test_dep(int distance) {
+    std::cout << "------ Running test: RAW distance " << distance << " " << std::endl;
+    std::vector<test_pld_t> test_input;
+    testcase_gen(distance, test_input);
+    if (_test_pe(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
+}
+
+bool test_random() {
+    std::cout << "------ Running test: random " << std::endl;
+    std::vector<test_pld_t> test_input;
+    test_input.resize(TEST_LEN);
+    for (size_t j = 0; j < TEST_LEN; j++) {
+        test_input[j].mat_val = VAL_T((rand() % 9 + 1) / 10.0);
+        test_input[j].vec_val = VAL_T((rand() % 9 + 1) / 10.0);
+        test_input[j].row_idx = rand() % BANK_SIZE;
+    }
+    if (_test_pe(test_input)) {
         std::cout << "Test passed" << std::endl;
         return true;
     } else {
@@ -332,7 +294,15 @@ bool test_muladd_nodep() {
 //--------------------------------------------------------------------------------------------------
 int main(int argc, char ** argv) {
     bool passed = true;
-    passed = passed && test_muladd_nodep();
+    passed = passed && test_nodep();
+    passed = passed && test_dep(1);
+    passed = passed && test_dep(2);
+    passed = passed && test_dep(3);
+    passed = passed && test_dep(4);
+    passed = passed && test_dep(5);
+    passed = passed && test_dep(6);
+    passed = passed && test_dep(7);
+    passed = passed && test_random();
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;

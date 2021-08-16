@@ -30,7 +30,6 @@ using aligned_vector = std::vector<T, aligned_allocator<T> >;
 // reference and verify utils
 //--------------------------------------------------------------------------------------------------
 
-// TODO: only support MULADD now!
 void compute_ref(
     spmv::io::CSRMatrix<float> &mat,
     std::vector<float> &vector,
@@ -137,7 +136,6 @@ struct cl_runtime {
 bool spmv_test_harness (
     cl_runtime &runtime,
     spmv::io::CSRMatrix<float> &ext_matrix,
-    const OP_T Op,
     bool skip_empty_rows
 ) {
     using namespace spmv::io;
@@ -213,21 +211,6 @@ bool spmv_test_harness (
     //--------------------------------------------------------------------
     // generate input vector
     //--------------------------------------------------------------------
-    VAL_T Zero;
-    switch (Op) {
-        case MULADD:
-            Zero = MulAddZero;
-            break;
-        case ANDOR:
-            Zero = AndOrZero;
-            break;
-        case ADDMIN:
-            Zero = AddMinZero;
-            break;
-        default:
-            Zero = MulAddZero;
-            break;
-    }
     std::vector<float> vector_f(ext_matrix.num_cols);
     std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
     aligned_vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
@@ -243,7 +226,7 @@ bool spmv_test_harness (
     aligned_vector<PACKED_VAL_T> result(mat.num_rows / PACK_SIZE);
     for (size_t i = 0; i < result.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
-            result[i].data[k] = Zero;
+            result[i].data[k] = 0;
         }
     }
     std::cout << "INFO : Input/result initialization complete!" << std::endl;
@@ -312,13 +295,10 @@ bool spmv_test_harness (
     }
     OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
@@ -414,7 +394,7 @@ bool test_basic(cl_runtime &runtime) {
             "data/sparse_matrix_graph/dense_128_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(runtime, mat_f, MULADD, false)) {
+    if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -426,7 +406,7 @@ bool test_basic(cl_runtime &runtime) {
 bool test_basic_sparse(cl_runtime &runtime) {
     std::cout << "------ Running test: on basic sparse matrix " << std::endl;
     spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
-    if (spmv_test_harness(runtime, mat_f, MULADD, false)) {
+    if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -443,7 +423,7 @@ bool test_medium_sparse(cl_runtime &runtime) {
             "data/sparse_matrix_graph/uniform_10K_10_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(runtime, mat_f, MULADD, false)) {
+    if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -460,7 +440,7 @@ bool test_gplus(cl_runtime &runtime) {
             "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, MULADD, false)) {
+    if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -477,7 +457,7 @@ bool test_ogbl_ppa(cl_runtime &runtime) {
             "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, MULADD, false)) {
+    if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {

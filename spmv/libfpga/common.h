@@ -4,7 +4,6 @@
 #include <ap_fixed.h>
 #include <ap_int.h>
 #include <ap_axi_sdata.h>
-#include "./math_constants.h"
 
 #define IDX_MARKER 0xffffffff
 
@@ -124,17 +123,13 @@ std::ostream& operator<<(std::ostream& os, const VEC_PLD_T &p) {
 //-------------------------------------------------------------------------
 // kernel-to-kernel streaming payload types
 //-------------------------------------------------------------------------
-// typedef struct {
-//     ap_uint<32> val[PACK_SIZE]; // the values in this packet
-//     unsigned pkt_idx; // packet index. Abs_idx of value i = pkt_idx * PACK_SIZE + i
-// } VEC_AXIS_DATA_T;
 
+// only works on Vitis 2020.2
 typedef struct {
     ap_uint<32 * (PACK_SIZE + 1)> data;
     ap_uint<2> user; // same as INST_T
 } VEC_AXIS_T;
 
-// typedef ap_axiu<32 * (PACK_SIZE + 1), 2, 0, 0> VEC_AXIS_T;
 #define VEC_AXIS_PKT_IDX(p) (p.data(31,0))
 #define VEC_AXIS_VAL(p, i) (p.data(63 + 32 * i,32 + 32 * i))
 
@@ -150,37 +145,12 @@ std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
 #endif
 
 //-------------------------------------------------------------------------
-// semiring
-//-------------------------------------------------------------------------
-typedef char OP_T;
-#define MULADD 0x00
-#define ANDOR  0x01
-#define ADDMIN 0x02
-
-const VAL_T MulAddZero = 0;
-const VAL_T AndOrZero  = 0;
-const VAL_T AddMinZero = UFIXED_INF;
-
-const VAL_T MulAddOne = 1;
-const VAL_T AndOrOne  = 1;
-const VAL_T AddMinOne = 0;
-
-//-------------------------------------------------------------------------
-// mask type
-//-------------------------------------------------------------------------
-typedef char MASK_T;
-#define NOMASK      0x00
-#define WRITETOZERO 0x01
-#define WRITETOONE  0x02
-
-//-------------------------------------------------------------------------
 // Kernel configurations
 //-------------------------------------------------------------------------
 const unsigned FIFO_DEPTH = 64;
-const unsigned BATCH_SIZE = 128;
 
 const unsigned OB_BANK_SIZE = 1024 * 8;
-const unsigned VB_BANK_SIZE = 1024 * 3;
+const unsigned VB_BANK_SIZE = 1024 * 4;
 
 // const unsigned OB_BANK_SIZE = 128;
 // const unsigned VB_BANK_SIZE = 512;

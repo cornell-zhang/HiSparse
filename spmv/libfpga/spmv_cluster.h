@@ -201,24 +201,8 @@ void spmv_cluster(
     const unsigned row_partition_idx,       // in
     const unsigned rows_in_partition,       // in
     const unsigned num_col_partitions,      // in
-    const unsigned num_partitions,          // in
-    const OP_T Op                           // in
+    const unsigned num_partitions           // in
 ) {
-    VAL_T Zero;
-    switch (Op) {
-        case MULADD:
-            Zero = MulAddZero;
-            break;
-        case ANDOR:
-            Zero = AndOrZero;
-            break;
-        case ADDMIN:
-            Zero = AddMinZero;
-            break;
-        default:
-            Zero = MulAddZero;
-            break;
-    }
 
     hls::stream<EDGE_PLD_T> ML2SF[PACK_SIZE];
     hls::stream<EDGE_PLD_T> SF2VAU[PACK_SIZE];
@@ -336,58 +320,42 @@ void spmv_cluster(
     ufixed_pe<0, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[0],
         PE2PK[0],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<1, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[1],
         PE2PK[1],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<2, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[2],
         PE2PK[2],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<3, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[3],
         PE2PK[3],
         rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
     );
     ufixed_pe<4, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[4],
         PE2PK[4],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<5, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[5],
         PE2PK[5],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<6, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[6],
         PE2PK[6],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
     ufixed_pe<7, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[7],
         PE2PK[7],
-        rows_in_partition / PACK_SIZE,
-        Zero,
-        Op
+        rows_in_partition / PACK_SIZE
     );
 
 #ifdef SPMV_CLUSTER_H_LINE_TRACING

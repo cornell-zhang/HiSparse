@@ -19,8 +19,8 @@ void spmv_sk1(
     const unsigned row_partition_idx,         // in
     const unsigned rows_per_c_in_partition,   // in
     const unsigned num_col_partitions,        // in
-    const unsigned num_partitions,            // in
-    const OP_T Op                             // in
+    const unsigned num_partitions             // in
+
 ) {
     #pragma HLS interface m_axi port=matrix_hbm_4 offset=slave bundle=spmv_mat4
     #pragma HLS interface m_axi port=matrix_hbm_5 offset=slave bundle=spmv_mat5
@@ -39,7 +39,6 @@ void spmv_sk1(
     #pragma HLS interface s_axilite port=rows_per_c_in_partition bundle=control
     #pragma HLS interface s_axilite port=num_col_partitions bundle=control
     #pragma HLS interface s_axilite port=num_partitions bundle=control
-    #pragma HLS interface s_axilite port=Op bundle=control
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=vec_in
@@ -63,8 +62,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     spmv_cluster<5>(
@@ -74,8 +72,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     spmv_cluster<6>(
@@ -85,8 +82,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     spmv_cluster<7>(
@@ -96,8 +92,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     spmv_cluster<8>(
@@ -107,8 +102,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     spmv_cluster<9>(
@@ -118,8 +112,7 @@ void spmv_sk1(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     axis_merge<6>(res, res_out);
