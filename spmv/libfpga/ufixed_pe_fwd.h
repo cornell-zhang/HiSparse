@@ -4,60 +4,12 @@
 #include <hls_stream.h>
 #include <ap_int.h>
 
-#include "math_constants.h"
 #include "common.h"
-
-#define MIN(a, b) ((a < b)? a : b)
+#include "utils/x_hls_utils.h" // for reg() function
 
 #ifndef __SYNTHESIS__
 // #define PE_LINE_TRACING
 #endif
-
-//----------------------------------------------------------------
-// ALUs
-//----------------------------------------------------------------
-
-VAL_T pe_ufixed_mul_alu(VAL_T a, VAL_T b, const VAL_T z, const OP_T op) {
-    #pragma HLS pipeline II=1
-    #pragma HLS latency min=2 max=2
-    VAL_T out;
-    switch (op) {
-        case MULADD:
-            out = a * b;
-            break;
-        case ANDOR:
-            out = a && b;
-            break;
-        case ADDMIN:
-            out = a + b;
-            break;
-        default:
-            out = z;  // z is the zero value in this semiring
-            break;
-    }
-    return out;
-}
-
-VAL_T pe_ufixed_add_alu(VAL_T a, VAL_T b, const OP_T op) {
-    #pragma HLS pipeline II=1
-    #pragma HLS latency min=0 max=0
-    VAL_T out;
-    switch (op) {
-        case MULADD:
-            out = a + b;
-            break;
-        case ANDOR:
-            out = a || b;
-            break;
-        case ADDMIN:
-            out = MIN(a, b);
-            break;
-        default:
-            out = a;
-            break;
-    }
-    return out;
-}
 
 //----------------------------------------------------------------
 // pe processing pipeline
@@ -71,23 +23,25 @@ struct IN_FLIGHT_WRITE {
 template<int id, unsigned bank_size, unsigned pack_size>
 void ufixed_pe_process(
     hls::stream<UPDATE_PLD_T> &input,
-    VAL_T output_buffer[bank_size],
-    const VAL_T zero,
-    const OP_T op
+    VAL_T output_buffer[bank_size]
 ) {
     bool exit = false;
 
     // in-flight write queue for data-forwarding
-    // the maximum write latency of URAM is 2
-    IN_FLIGHT_WRITE ifwq[2];
+    // designed for URAM latnecy=3 (RDL=3, WRL=2)
+    IN_FLIGHT_WRITE ifwq[5];
     #pragma HLS array_partition variable=ifwq complete;
     ifwq[0] = (IN_FLIGHT_WRITE){false, 0, 0};
     ifwq[1] = (IN_FLIGHT_WRITE){false, 0, 0};
+    ifwq[2] = (IN_FLIGHT_WRITE){false, 0, 0};
+    ifwq[3] = (IN_FLIGHT_WRITE){false, 0, 0};
+    ifwq[4] = (IN_FLIGHT_WRITE){false, 0, 0};
 
     pe_process_loop:
     while (!exit) {
         #pragma HLS pipeline II=1
-        #pragma HLS dependence variable=output_buffer false
+        #pragma HLS dependence variable=output_buffer inter false
+        #pragma HLS dependence variable=ifwq intra ture
         UPDATE_PLD_T pld = input.read();
         bool valid = true;
 #ifdef PE_LINE_TRACING
@@ -100,19 +54,25 @@ void ufixed_pe_process(
 
         if (valid) {
             IDX_T bank_addr = pld.row_idx / pack_size;
-            VAL_T incr = pe_ufixed_mul_alu(
-                pld.mat_val, pld.vec_val,
-                zero, op
-            );
+            VAL_T incr = pld.mat_val * pld.vec_val;
             VAL_T q = output_buffer[bank_addr];
             VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
                           ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
+                          ((bank_addr == ifwq[2].addr) && ifwq[2].valid) ? ifwq[2].value :
+                          ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
+                          ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
                           q;
-            VAL_T new_q = pe_ufixed_add_alu(q_fwd, incr, op);
+            VAL_T new_q = reg(q_fwd + incr); // force a register after addition
             output_buffer[bank_addr] = new_q;
+            ifwq[4] = ifwq[3];
+            ifwq[3] = ifwq[2];
+            ifwq[2] = ifwq[1];
             ifwq[1] = ifwq[0];
             ifwq[0] = (IN_FLIGHT_WRITE){true, bank_addr, new_q};
         } else {
+            ifwq[4] = ifwq[3];
+            ifwq[3] = ifwq[2];
+            ifwq[2] = ifwq[1];
             ifwq[1] = ifwq[0];
             ifwq[0] = (IN_FLIGHT_WRITE){false, 0, 0};
         }
@@ -153,9 +113,7 @@ template<int id, unsigned bank_size, unsigned pack_size>
 void ufixed_pe(
     hls::stream<UPDATE_PLD_T> &input,
     hls::stream<VEC_PLD_T> &output,
-    const unsigned used_buf_len,
-    const VAL_T zero,
-    const OP_T op
+    const unsigned used_buf_len
 ) {
     VAL_T output_buffer[bank_size];
     #pragma HLS bind_storage variable=output_buffer type=RAM_2P impl=URAM latency=3
@@ -164,7 +122,7 @@ void ufixed_pe(
     loop_reset_ob:
     for (unsigned i = 0; i < used_buf_len; i++) {
         #pragma HLS pipeline II=1
-        output_buffer[i] = zero;
+        output_buffer[i] = 0;
     }
 
     // wait on the first SOD
@@ -182,7 +140,7 @@ void ufixed_pe(
     while (!exit) {
         #pragma HLS pipeline off
         // this function will exit upon EOD
-        ufixed_pe_process<id, bank_size, pack_size>(input, output_buffer, zero, op);
+        ufixed_pe_process<id, bank_size, pack_size>(input, output_buffer);
 
         // read the next payload and decide whether continue processing or exit
         bool got_valid_pld = false;

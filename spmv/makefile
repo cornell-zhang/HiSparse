@@ -73,4 +73,6 @@ clean:
 .PHONY: cleanall
 cleanall: clean
 	rm -rf emconfig.json
-	rm -rf $(HLS_DIR) $(IMP_DIR)
+	rm -rf ./_x.sw_emu ./build_dir.sw_emu
+	rm -rf ./_x.hw_emu ./build_dir.hw_emu
+	rm -rf ./_x.hw ./build_dir.hw

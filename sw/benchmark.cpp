@@ -106,7 +106,6 @@ std::ostream& operator<<(std::ostream& os, const benckmark_result &p) {
 benckmark_result spmv_benchmark (
     cl_runtime &runtime,
     spmv::io::CSRMatrix<float> &ext_matrix,
-    const OP_T Op,
     bool skip_empty_rows
 ) {
     using namespace spmv::io;
@@ -190,21 +189,6 @@ benckmark_result spmv_benchmark (
     //--------------------------------------------------------------------
     // generate input vector
     //--------------------------------------------------------------------
-    VAL_T Zero;
-    switch (Op) {
-        case MULADD:
-            Zero = MulAddZero;
-            break;
-        case ANDOR:
-            Zero = AndOrZero;
-            break;
-        case ADDMIN:
-            Zero = AddMinZero;
-            break;
-        default:
-            Zero = MulAddZero;
-            break;
-    }
     std::vector<float> vector_f(ext_matrix.num_cols);
     std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
     aligned_vector<PACKED_VAL_T> vector(mat->num_cols / PACK_SIZE);
@@ -220,7 +204,7 @@ benckmark_result spmv_benchmark (
     aligned_vector<PACKED_VAL_T> result(mat->num_rows / PACK_SIZE);
     for (size_t i = 0; i < result.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
-            result[i].data[k] = Zero;
+            result[i].data[k] = 0;
         }
     }
     std::cout << "INFO : Input/result initialization complete!" << std::endl;
@@ -292,13 +276,10 @@ benckmark_result spmv_benchmark (
     }
     OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 6, Op));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat->num_cols));
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
@@ -428,7 +409,7 @@ int main (int argc, char** argv) {
     spmv::io::CSRMatrix<float>* mat_f = new spmv::io::CSRMatrix<float>;
     *mat_f = spmv::io::load_csr_matrix_from_float_npz(dataset);
     for (auto &x : mat_f->adj_data) {x = 1 / mat_f->num_cols;}
-    std::cout << spmv_benchmark(runtime, *mat_f, MULADD, true) << std::endl;
+    std::cout << spmv_benchmark(runtime, *mat_f, true) << std::endl;
     delete mat_f;
 
     std::cout << "===== Benchmark Finished =====" << std::endl;

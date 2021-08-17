@@ -59,9 +59,7 @@ void data_drain(
 
 void main_dataflow(
     UPDATE_PLD_T input_buffer[IN_BUF_SIZE],
-    VEC_PLD_T result_buffer[BANK_SIZE],
-    const VAL_T zero,
-    const OP_T op
+    VEC_PLD_T result_buffer[BANK_SIZE]
 ) {
 #ifndef __SYNTHESIS__
     std::cout << "Main dataflow: started." << std::endl;
@@ -83,9 +81,7 @@ void main_dataflow(
     ufixed_pe<0, BANK_SIZE, 1>(
         feeder_to_pe,
         pe_to_drain,
-        BANK_SIZE,
-        zero,
-        op
+        BANK_SIZE
     );
 
 #ifndef __SYNTHESIS__
@@ -104,8 +100,7 @@ void pe_tb (
     const IDX_T *test_addr_gmem, //0
     const VAL_T *test_mat_gmem,  //1
     const VAL_T *test_vec_gmem,  //2
-    VAL_T *result_gmem,          //3
-    const OP_T op                //4
+    VAL_T *result_gmem           //3
 ) {
     #pragma HLS interface m_axi port=test_addr_gmem offset=slave bundle=gmem0
     #pragma HLS interface m_axi port=test_mat_gmem  offset=slave bundle=gmem1
@@ -117,8 +112,6 @@ void pe_tb (
     #pragma HLS interface s_axilite port=test_vec_gmem  bundle=control
     #pragma HLS interface s_axilite port=result_gmem    bundle=control
 
-    #pragma HLS interface s_axilite port=op     bundle=control
-
     #pragma HLS interface s_axilite port=return bundle=control
 
 #ifndef __SYNTHESIS__
@@ -127,26 +120,8 @@ void pe_tb (
     std::cout << "\tconst VAL_T *test_mat_gmem = " << std::hex << test_addr_gmem << std::endl;
     std::cout << "\tconst VAL_T *test_vec_gmem = " << std::hex << test_addr_gmem << std::endl;
     std::cout << "\tVAL_T *result_gmem = " << std::hex << test_addr_gmem << std::endl;
-    std::cout << "\tconst OP_T op = " << std::hex << (int)op
-              << " [" << &op << "]"<< std::endl;
     std::cout << std::dec << std::endl;
 #endif
-
-    VAL_T zero;
-    switch (op) {
-        case MULADD:
-            zero = MulAddZero;
-            break;
-        case ANDOR:
-            zero = AndOrZero;
-            break;
-        case ADDMIN:
-            zero = AddMinZero;
-            break;
-        default:
-            zero = MulAddZero;
-            break;
-    }
 
     // input buffer
     UPDATE_PLD_T input_buffer[IN_BUF_SIZE];
@@ -202,7 +177,7 @@ void pe_tb (
     std::cout << "Testbench invoking the main dataflow... " << std::endl;
 #endif
     // run main dataflow
-    main_dataflow(input_buffer, result_buffer, zero, op);
+    main_dataflow(input_buffer, result_buffer);
 
 #ifndef __SYNTHESIS__
     std::cout << "Testbench main dataflow finished" << std::endl;
