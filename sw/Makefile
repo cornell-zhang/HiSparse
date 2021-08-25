@@ -1,6 +1,12 @@
 PROJ_ROOT = ..
-HW_DIR = $(PROJ_ROOT)/spmv
-LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+IMPL := float
+ifeq ($(IMPL), float)
+	HW_DIR = $(PROJ_ROOT)/spmv-fp
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
+else
+	HW_DIR = $(PROJ_ROOT)/spmv
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+endif
 
 HOST_ARCH = x86
 

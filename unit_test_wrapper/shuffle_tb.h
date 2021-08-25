@@ -1,8 +1,8 @@
-#ifndef GRAPHLILY_TEST_TESTBENCH_SHUFFLE_TB_H_
-#define GRAPHLILY_TEST_TESTBENCH_SHUFFLE_TB_H_
+#ifndef UNIT_TEST_WRAPPER_SHUFFLE_TB_H_
+#define UNIT_TEST_WRAPPER_SHUFFLE_TB_H_
 
 #include "ap_fixed.h"
-#include "./overlay.h"
+#include "common.h"
 const unsigned BUF_SIZE = 1024;
 
-// #endif // GRAPHLILY_TEST_TESTBENCH_SHUFFLE_TB_H_
+#endif // UNIT_TEST_WRAPPER_SHUFFLE_TB_H_

@@ -7,6 +7,9 @@
 *.log
 *.jou
 *_x.*
+*.wdb
+*.wcfg
+*.protoinst
 *build_dir.*
 emconfig.json
 .run
@@ -19,3 +22,8 @@ spmv_csim/csim
 sw/benchmark
 sw/host
 unit_tests/test_pe
+
+# hw_emu settings
+xrt.ini
+presim.tcl
+

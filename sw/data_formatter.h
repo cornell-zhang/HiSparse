@@ -55,7 +55,8 @@ void util_pad_marker_end_of_row_no_skip_empty_rows(std::vector<DataT> &adj_data,
     uint32_t num_rows = adj_indptr.size() - 1;
     std::vector<DataT> adj_data_swap(adj_data.size() + num_rows);
     std::vector<uint32_t> adj_indices_swap(adj_indices.size() + num_rows);
-    DataT val_marker = 1;
+    // DataT val_marker = 1;
+    uint32_t val_marker = 1;
     uint32_t count = 0;
     for (uint32_t row_idx = 0; row_idx < num_rows; row_idx++) {
         uint32_t start = adj_indptr[row_idx];
@@ -65,7 +66,12 @@ void util_pad_marker_end_of_row_no_skip_empty_rows(std::vector<DataT> &adj_data,
             adj_indices_swap[count] = adj_indices[i];
             count++;
         }
-        adj_data_swap[count] = val_marker;
+        std::is_same<DataT, float> is_DataT_float;
+        if (is_DataT_float) {
+            adj_data_swap[count] = reinterpret_cast<float&>(val_marker);
+        } else {
+            adj_data_swap[count] = val_marker;
+        }
         adj_indices_swap[count] = idx_marker;
         count++;
     }
@@ -110,7 +116,8 @@ void util_pad_marker_end_of_row_skip_empty_rows(std::vector<DataT> &adj_data,
                                                 + !row_is_empty[row_idx];
     }
 
-    std::vector<DataT> val_marker(num_rows);
+    // std::vector<DataT> val_marker(num_rows);
+    std::vector<uint32_t> val_marker(num_rows);
     for (size_t row_idx = 0; row_idx < num_rows; row_idx++) {
         if (!row_is_empty[row_idx]) {
             val_marker[row_idx] = 1;
@@ -144,7 +151,12 @@ void util_pad_marker_end_of_row_skip_empty_rows(std::vector<DataT> &adj_data,
                 adj_indices_swap[count] = adj_indices[i];
                 count++;
             }
-            adj_data_swap[count] = val_marker[row_idx];
+            std::is_same<DataT, float> is_DataT_float;
+            if (is_DataT_float) {
+                adj_data_swap[count] = reinterpret_cast<float&>(val_marker[row_idx]);
+            } else {
+                adj_data_swap[count] = val_marker[row_idx];
+            }
             adj_indices_swap[count] = idx_marker;
             count++;
         }

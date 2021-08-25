@@ -1,5 +1,5 @@
 #include "pe_tb.h"
-#include "ufixed_pe_fwd.h"
+#include "pe.h"
 #include "hls_stream.h"
 
 #ifndef __SYNTHESIS__
@@ -78,7 +78,7 @@ void main_dataflow(
     std::cout << "Main dataflow: data feeder complete" << std::endl;
 #endif
 
-    ufixed_pe<0, BANK_SIZE, 1>(
+    pe<0, BANK_SIZE, 1>(
         feeder_to_pe,
         pe_to_drain,
         BANK_SIZE

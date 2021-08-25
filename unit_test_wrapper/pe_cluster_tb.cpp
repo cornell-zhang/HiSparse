@@ -1,5 +1,5 @@
 #include "pe_cluster_tb.h"
-#include "ufixed_pe_fwd.h"
+#include "pe.h"
 #include "hls_stream.h"
 
 #ifndef __SYNTHESIS__

@@ -1,4 +1,5 @@
 PROJ_ROOT = ..
+IMPL := float
 
 CXX := g++
 
@@ -23,9 +24,13 @@ CXXFLAGS += -Wno-misleading-indentation
 CXXFLAGS += -Wno-int-in-bool-context
 CXXFLAGS += -Wno-unused-label
 CXXFLAGS += -Wno-sign-compare
-
-HW_DIR = $(PROJ_ROOT)/spmv
-LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+ifeq ($(IMPL), float)
+	HW_DIR = $(PROJ_ROOT)/spmv-fp
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
+else
+	HW_DIR = $(PROJ_ROOT)/spmv
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+endif
 
 .PHONY: copy_files
 copy_files:

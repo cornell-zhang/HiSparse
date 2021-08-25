@@ -1,5 +1,12 @@
 PROJ_ROOT = ..
-LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+IMPL := float
+
+ifeq ($(IMPL), float)
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
+else
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga
+endif
+
 TB_DIR = $(PROJ_ROOT)/unit_test_wrapper
 
 HOST_ARCH = x86
@@ -34,10 +41,15 @@ emconfig.json:
 test_pe: test_pe.cpp $(xcl2_SRCS) emconfig.json
 	$(CXX) $(CXXFLAGS) test_pe.cpp $(xcl2_SRCS) -o $@ $(LDFLAGS)
 
+test_shuffle: test_shuffle.cpp $(xcl2_SRCS) emconfig.json
+	$(CXX) $(CXXFLAGS) test_shuffle.cpp $(xcl2_SRCS) -o $@ $(LDFLAGS)
+
 .PHONY: clean cleanall
 clean:
+	rm -rf *.wdb *.wcfg *.protoinst
 	rm -rf .run *.log *.csv
 
-cleanall:
+cleanall: clean
 	rm -rf emconfig.json
 	rm -rf test_pe
+	rm -rf test_shuffle

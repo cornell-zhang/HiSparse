@@ -294,14 +294,18 @@ bool test_random() {
 //--------------------------------------------------------------------------------------------------
 int main(int argc, char ** argv) {
     bool passed = true;
-    passed = passed && test_nodep();
-    passed = passed && test_dep(1);
-    passed = passed && test_dep(2);
-    passed = passed && test_dep(3);
-    passed = passed && test_dep(4);
-    passed = passed && test_dep(5);
-    passed = passed && test_dep(6);
-    passed = passed && test_dep(7);
+    // passed = passed && test_nodep();
+    // passed = passed && test_dep(1);
+    // passed = passed && test_dep(2);
+    // passed = passed && test_dep(3);
+    // passed = passed && test_dep(4);
+    // passed = passed && test_dep(5);
+    // passed = passed && test_dep(6);
+    // passed = passed && test_dep(7);
+    passed = passed && test_dep(8);
+    passed = passed && test_dep(9);
+    passed = passed && test_dep(10);
+    passed = passed && test_dep(11);
     passed = passed && test_random();
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;

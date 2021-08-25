@@ -195,5 +195,9 @@ void shuffle_tb(
         offset += i;
     }
 
+#ifndef __SYNTHESIS__
+    std::cout << "kernel retruning" << std::endl;
+#endif
+
 } // kernel
 } // extern "C"

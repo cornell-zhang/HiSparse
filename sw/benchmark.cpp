@@ -119,14 +119,13 @@ benckmark_result spmv_benchmark (
     std::cout << "INFO : Test started" << std::endl;
     auto t0 = high_resolution_clock::now();
     util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS, PACK_SIZE);
-    CSRMatrix<VAL_T>* mat = new CSRMatrix<VAL_T>;
-    *mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
-    size_t num_row_partitions = (mat->num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
-    size_t num_col_partitions = (mat->num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
+    CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
+    size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
+    size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
     size_t num_partitions = num_row_partitions * num_col_partitions;
-    CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE>* cpsr_matrix = new CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE>;
-    *cpsr_matrix = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
-            *mat,
+    CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE> cpsr_matrix
+        = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
+            mat,
             IDX_MARKER,
             LOGICAL_OB_SIZE,
             LOGICAL_VB_SIZE,
@@ -150,14 +149,14 @@ benckmark_result spmv_benchmark (
     for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
         for (size_t j = 0; j < num_row_partitions; j++) {
             for (size_t i = 0; i < num_col_partitions; i++) {
-                auto indices_partition = cpsr_matrix->get_packed_indices(j, i, c);
+                auto indices_partition = cpsr_matrix.get_packed_indices(j, i, c);
                 channel_indices[c].insert(channel_indices[c].end(),
                     indices_partition.begin(), indices_partition.end());
-                auto vals_partition = cpsr_matrix->get_packed_data(j, i, c);
+                auto vals_partition = cpsr_matrix.get_packed_data(j, i, c);
                 channel_vals[c].insert(channel_vals[c].end(),
                     vals_partition.begin(), vals_partition.end());
                 assert(indices_partition.size() == vals_partition.size());
-                auto indptr_partition = cpsr_matrix->get_packed_indptr(j, i, c);
+                auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, c);
                 if (!((j == (num_row_partitions - 1)) && (i == (num_col_partitions - 1)))) {
                     channel_partition_indptr[c][j*num_col_partitions + i + 1].start =
                         channel_partition_indptr[c][j*num_col_partitions + i].start
@@ -191,7 +190,7 @@ benckmark_result spmv_benchmark (
     //--------------------------------------------------------------------
     std::vector<float> vector_f(ext_matrix.num_cols);
     std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
-    aligned_vector<PACKED_VAL_T> vector(mat->num_cols / PACK_SIZE);
+    aligned_vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
     for (size_t i = 0; i < vector.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
             vector[i].data[k] = VAL_T(vector_f[i*PACK_SIZE + k]);
@@ -201,7 +200,7 @@ benckmark_result spmv_benchmark (
     //--------------------------------------------------------------------
     // allocate space for results
     //--------------------------------------------------------------------
-    aligned_vector<PACKED_VAL_T> result(mat->num_rows / PACK_SIZE);
+    aligned_vector<PACKED_VAL_T> result(mat.num_rows / PACK_SIZE);
     for (size_t i = 0; i < result.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
             result[i].data[k] = 0;
@@ -241,8 +240,8 @@ benckmark_result spmv_benchmark (
     // Handle vector and result
     CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
     CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[21]);
-    size_t vector_size = sizeof(VAL_T) * mat->num_cols;
-    size_t result_size = sizeof(VAL_T) * mat->num_rows;
+    size_t vector_size = sizeof(VAL_T) * mat.num_cols;
+    size_t result_size = sizeof(VAL_T) * mat.num_rows;
     cl::Buffer vector_buf
         = CL_BUFFER_RDONLY(runtime.context, vector_size, vector_ext, err);
     cl::Buffer result_buf
@@ -281,26 +280,26 @@ benckmark_result spmv_benchmark (
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 4, (unsigned)num_col_partitions));
     OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 5, (unsigned)num_partitions));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
-    OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat->num_cols));
+    OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
-    std::cout << "  non-changing arguments set." << std::endl;
+    // std::cout << "  non-changing arguments set." << std::endl;
 
     size_t rows_per_ch_in_last_row_part;
-    if (mat->num_rows % LOGICAL_OB_SIZE == 0) {
+    if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
         rows_per_ch_in_last_row_part = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
     } else {
-        rows_per_ch_in_last_row_part = mat->num_rows % LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
+        rows_per_ch_in_last_row_part = mat.num_rows % LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
     }
 
     //--------------------------------------------------------------------
     // benchmarking
     //--------------------------------------------------------------------
     double total_time = 0;
-    unsigned Nnz = mat->adj_data.size();
-    double Mops = Nnz / 1000 / 1000;
+    unsigned Nnz = mat.adj_data.size();
+    double Mops = 2 * Nnz / 1000 / 1000;
     double gbs = double(Nnz * 2 * 4) / 1024.0 / 1024.0 / 1024.0;
     for (unsigned i = 0; i < NUM_RUNS; i++) {
-        std::cout << "  Running Run " << i << std::endl;
+        // std::cout << "  Running Run " << i << std::endl;
         auto t0 = high_resolution_clock::now();
         for (size_t row_part_id = 0; row_part_id < num_row_partitions; row_part_id++) {
             unsigned part_len = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
@@ -314,15 +313,15 @@ benckmark_result spmv_benchmark (
             OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 2, (unsigned)row_part_id));
             OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 3, (unsigned)part_len));
             OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
-            std::cout << "    run-specific arguments set." << std::endl;
+            // std::cout << "    run-specific arguments set." << std::endl;
             OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
             OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
             OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
             OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
             OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
-            std::cout << "    all kernel enqueued." << std::endl;
+            // std::cout << "    all kernel enqueued." << std::endl;
             runtime.command_queue.finish();
-            std::cout << "    all kernel finished." << std::endl;
+            // std::cout << "    all kernel finished." << std::endl;
         }
         auto t1 = high_resolution_clock::now();
         total_time += double(duration_cast<microseconds>(t1 - t0).count()) / 1000;
@@ -335,16 +334,14 @@ benckmark_result spmv_benchmark (
     //--------------------------------------------------------------------
     // release host & device memory
     //--------------------------------------------------------------------
-    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
-        err = clReleaseMemObject(channel_packets_buf[c]());
-        CHECK_ERR(err);
-    }
-    err = clReleaseMemObject(vector_buf());
-    CHECK_ERR(err);
-    err = clReleaseMemObject(result_buf());
-    CHECK_ERR(err);
-    delete mat;
-    delete cpsr_matrix;
+    // for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+    //     err = clReleaseMemObject(channel_packets_buf[c]());
+    //     CHECK_ERR(err);
+    // }
+    // err = clReleaseMemObject(vector_buf());
+    // CHECK_ERR(err);
+    // err = clReleaseMemObject(result_buf());
+    // CHECK_ERR(err);
 
     return bmark_res;
 }
@@ -406,11 +403,9 @@ int main (int argc, char** argv) {
     std::string dataset = argv[2];
 
     std::cout << "------ Running benchmark on " << dataset << std::endl;
-    spmv::io::CSRMatrix<float>* mat_f = new spmv::io::CSRMatrix<float>;
-    *mat_f = spmv::io::load_csr_matrix_from_float_npz(dataset);
-    for (auto &x : mat_f->adj_data) {x = 1 / mat_f->num_cols;}
-    std::cout << spmv_benchmark(runtime, *mat_f, true) << std::endl;
-    delete mat_f;
+    spmv::io::CSRMatrix<float> mat_f = spmv::io::load_csr_matrix_from_float_npz(dataset);
+    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
+    std::cout << spmv_benchmark(runtime, mat_f, true) << std::endl;
 
     std::cout << "===== Benchmark Finished =====" << std::endl;
     return 0;

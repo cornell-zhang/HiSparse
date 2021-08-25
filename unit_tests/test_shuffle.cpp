@@ -5,15 +5,30 @@
 
 #include <vector>
 #include <ap_fixed.h>
-#include <gtest/gtest.h>
-
-#include "graphlily/global.h"
-
 #include <ap_int.h>
+
+#include "shuffle_tb.h"
+#include "common.h"
+#include "xcl2.hpp"
 
 #define DISP_EXE_CMD(cmd)\
 std::cout << cmd << std::endl;\
 system(cmd.c_str());
+
+// device memory channels
+#define MAX_HBM_CHANNEL_COUNT 32
+#define CHANNEL_NAME(n) n | XCL_MEM_TOPOLOGY
+const int HBM[MAX_HBM_CHANNEL_COUNT] = {
+    CHANNEL_NAME(0),  CHANNEL_NAME(1),  CHANNEL_NAME(2),  CHANNEL_NAME(3),  CHANNEL_NAME(4),
+    CHANNEL_NAME(5),  CHANNEL_NAME(6),  CHANNEL_NAME(7),  CHANNEL_NAME(8),  CHANNEL_NAME(9),
+    CHANNEL_NAME(10), CHANNEL_NAME(11), CHANNEL_NAME(12), CHANNEL_NAME(13), CHANNEL_NAME(14),
+    CHANNEL_NAME(15), CHANNEL_NAME(16), CHANNEL_NAME(17), CHANNEL_NAME(18), CHANNEL_NAME(19),
+    CHANNEL_NAME(20), CHANNEL_NAME(21), CHANNEL_NAME(22), CHANNEL_NAME(23), CHANNEL_NAME(24),
+    CHANNEL_NAME(25), CHANNEL_NAME(26), CHANNEL_NAME(27), CHANNEL_NAME(28), CHANNEL_NAME(29),
+    CHANNEL_NAME(30), CHANNEL_NAME(31)};
+
+const int DDR[2] = {CHANNEL_NAME(32), CHANNEL_NAME(33)};
+
 
 #define CL_CREATE_EXT_PTR(name, data, channel)\
 cl_mem_ext_ptr_t name;\
@@ -24,49 +39,7 @@ name.flags = channel;
 std::string target = "hw_emu";
 const unsigned num_lanes = 8;
 
-struct test_pld_t {
-    graphlily::val_t mat_val;
-    graphlily::idx_t row_idx;
-    graphlily::idx_t col_idx;
-    ap_uint<2> inst;
-};
-#define SOD 0x1 // start-of-data
-#define EOD 0x2 // end-of-data
-#define EOS 0x3 // end-of-stream
-
-std::string inst2str(ap_uint<2> inst) {
-    switch (inst) {
-        case SOD: return std::string("SOD");
-        case EOD: return std::string("EOD");
-        case EOS: return std::string("EOS");
-        default:  return std::string(std::to_string((int)inst));
-    }
-}
-
-std::ostream& operator<<(std::ostream& os, const test_pld_t &p) {
-    os << '{'
-        << "mat val: " << p.mat_val << '|'
-        << "row idx: " << p.row_idx << '|'
-        << "col idx: " << p.col_idx << '|'
-        << "inst: "  << inst2str(p.inst) << '}';
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const std::vector<test_pld_t> &p) {
-    for (size_t i = 0; i < p.size(); i++) {
-        os << "i = " << i << ": " << p[i] << std::endl;
-    }
-    return os;
-}
-
-//--------------------------------------------------------------------------------------------------
-// clean stuff
-//--------------------------------------------------------------------------------------------------
-
-void clean_proj_folder() {
-    std::string command = "rm -rf ./" + graphlily::proj_folder_name;
-    DISP_EXE_CMD(command);
-}
+using test_pld_t = EDGE_PLD_T;
 
 //--------------------------------------------------------------------------------------------------
 // reference and verify utils
@@ -87,14 +60,19 @@ void compute_ref(std::vector<test_pld_t> &test_input,
         input_buckets[ILid].push_back(p);
         if (p.inst == EOS) {
             ILid++;
+            if (ILid == num_lanes) {
+                break;
+            }
         }
     }
+
+    // std::cout << "Compute ref: temporary input buffer initialized" << std::endl;
 
     std::vector<test_pld_t> output_buckets[num_lanes];
     for (unsigned k = 0; k < num_lanes; k++) {
         output_buckets[k].clear();
     }
-    // std::cout << "Compute ref: temporary output buffer allocated" << std::endl;
+    // std::cout << "Compute ref: temporary output buffer allocated & initialized" << std::endl;
 
     // do the actual shuffling
     unsigned ILidx[num_lanes];
@@ -202,6 +180,7 @@ void compute_ref(std::vector<test_pld_t> &test_input,
             break;
         } // switch (state)
     } // while (!exit)
+    // std::cout << "Compute ref: main processing logic finished" << std::endl;
 
     // merge output buckets
     unsigned offset = 0;
@@ -258,9 +237,16 @@ bool stream_match_ooo(std::vector<test_pld_t> ref, std::vector<test_pld_t> src) 
     return true;
 }
 
-void verify(std::vector<test_pld_t> ref_results,
+bool verify(std::vector<test_pld_t> ref_results,
             std::vector<test_pld_t> kernel_results) {
-    ASSERT_EQ(ref_results.size(), kernel_results.size());
+    if (ref_results.size() != kernel_results.size()) {
+        std::cout << "Error: Size mismatch"
+                      << std::endl;
+        std::cout   << "  Reference result size: " << ref_results.size()
+                    << "  Kernel result size: " << kernel_results.size()
+                    << std::endl;
+        return false;
+    }
     unsigned ref_idx = 0;
     unsigned res_idx = 0;
     bool passing = true;
@@ -297,84 +283,16 @@ void verify(std::vector<test_pld_t> ref_results,
         std::cout << (match ? "  passed." : "  failed!") << std::endl;
         passing = passing && match;
     }
-    ASSERT_TRUE(passing);
-}
-
-//--------------------------------------------------------------------------------------------------
-// synthesizer
-//--------------------------------------------------------------------------------------------------
-void synthesize_tb(bool setup_only) {
-    // create proj directory
-    std::string command = "mkdir -p " + graphlily::proj_folder_name;
-    DISP_EXE_CMD(command);
-
-    // copy source code
-    command = "cp " + graphlily::root_path + "/graphlily/hw/shuffle.h"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-    command = "cp " + graphlily::root_path + "/graphlily/hw/math_constants.h"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-    command = "cp " + graphlily::root_path + "/graphlily/hw/util.h"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-    command = "cp " + graphlily::root_path + "/graphlily/hw/overlay.h"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-    command = "cp " + graphlily::root_path + "/tests/testbench/shuffle_tb.h"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-    command = "cp " + graphlily::root_path + "/tests/testbench/shuffle_tb.cpp"
-                    + " " + graphlily::proj_folder_name + "/";
-    DISP_EXE_CMD(command);
-
-    // put configuration into pe_cluster_tb.h
-    std::ofstream header_tb(graphlily::proj_folder_name + "/shuffle_tb.h", std::ios_base::app);
-    header_tb << "#endif // GRAPHLILY_TEST_TESTBENCH_SHUFFLE_TB_H_" << std::endl;
-    header_tb.close();
-
-    // close the include guard in overlay.h
-    // we do not use any configuration here, we just need the typedefs
-    std::ofstream header_gll(graphlily::proj_folder_name + "/overlay.h", std::ios_base::app);
-    header_gll << "#endif // GRAPHLILY_HW_OVERLAY_H_" << std::endl;
-    header_gll.close();
-
-    // generate pe_tb.ini
-    std::ofstream ini(graphlily::proj_folder_name + "/shuffle_tb.ini");
-    ini << "[connectivity]" << std::endl;
-    ini << "sp=shuffle_tb_1.input_packets:DDR[0]" << std::endl;
-    ini << "sp=shuffle_tb_1.output_packets:DDR[0]" << std::endl;
-    ini.close();
-
-    // generate makefile
-    std::ofstream makefile(graphlily::proj_folder_name + "/makefile");
-    std::string makefile_body;
-    makefile_body += "LDCLFLAGS += --config shuffle_tb.ini\n";
-    makefile_body += "KERNEL_OBJS += $(TEMP_DIR)/shuffle_tb.xo\n";
-    makefile_body += "\n";
-    makefile_body += "$(TEMP_DIR)/shuffle_tb.xo: shuffle_tb.cpp\n";
-    makefile_body += "\tmkdir -p $(TEMP_DIR)\n";
-    makefile_body += "\t$(VPP) $(CLFLAGS) --temp_dir $(TEMP_DIR) -c -k shuffle_tb -I'$(<D)' -o'$@' '$<'\n";
-    makefile_body += "\n";
-    makefile << "TARGET := " << target << "\n" << std::endl;
-    makefile << graphlily::makefile_prologue << makefile_body << graphlily::makefile_epilogue;
-    makefile.close();
-
-    // switch to build folder and build
-    if (!setup_only) {
-        command = "cd " + graphlily::proj_folder_name + "; " + "make build";
-        DISP_EXE_CMD(command);
-        if (target == "sw_emu" || target == "hw_emu") {
-            command = "cp " + graphlily::proj_folder_name + "/emconfig.json " + ".";
-            DISP_EXE_CMD(command);
-        }
+    if (!passing) {
+        return false;
     }
+    return true;
 }
 
 //--------------------------------------------------------------------------------------------------
 // test harness
 //--------------------------------------------------------------------------------------------------
-void _test_shuffle(std::vector<test_pld_t> &test_input) {
+bool _test_shuffle(std::vector<test_pld_t> &test_input) {
     // set up runtime
     cl_int err;
     if (target == "sw_emu" || target == "hw_emu") {
@@ -384,18 +302,18 @@ void _test_shuffle(std::vector<test_pld_t> &test_input) {
     bool found_device = false;
     auto devices = xcl::get_xil_devices();
     for (size_t i = 0; i < devices.size(); i++) {
-        if (devices[i].getInfo<CL_DEVICE_NAME>() == graphlily::device_name) {
+        if (devices[i].getInfo<CL_DEVICE_NAME>() == "xilinx_u280_xdma_201920_3") {
             device = devices[i];
             found_device = true;
             break;
         }
     }
     if (!found_device) {
-        std::cout << "Failed to find " << graphlily::device_name << ", exit!\n";
+        std::cout << "Failed to find " << "xilinx_u280_xdma_201920_3" << ", exit!\n";
         exit(EXIT_FAILURE);
     }
     cl::Context context = cl::Context(device, NULL, NULL, NULL);
-    auto file_buf = xcl::read_binary_file("./" + graphlily::proj_folder_name + "/build_dir." + target + "/fused.xclbin");
+    auto file_buf = xcl::read_binary_file("../unit_test_wrapper/shuffle_tb_build_dir." + target + "/shuffle_tb.xclbin");
     cl::Program::Binaries binaries{{file_buf.data(), file_buf.size()}};
     cl::Program program(context, {device}, binaries, NULL, &err);
     if (err != CL_SUCCESS) {
@@ -414,13 +332,13 @@ void _test_shuffle(std::vector<test_pld_t> &test_input) {
 
     // prepare space for results
     std::vector<test_pld_t> kernel_result;
-    kernel_result.resize(1024 * num_lanes);
+    kernel_result.resize(BUF_SIZE * num_lanes);
     std::fill(kernel_result.begin(), kernel_result.end(), test_pld_t({0,0,0,0}));
 
     // allocate memory
 
-    CL_CREATE_EXT_PTR(test_input_ext, test_input.data(), graphlily::DDR[0]);
-    CL_CREATE_EXT_PTR(kernel_result_ext, kernel_result.data(), graphlily::DDR[0]);
+    CL_CREATE_EXT_PTR(test_input_ext, test_input.data(), DDR[0]);
+    CL_CREATE_EXT_PTR(kernel_result_ext, kernel_result.data(), DDR[0]);
 
     cl::Buffer test_input_buf;
     cl::Buffer kernel_result_buf;
@@ -461,7 +379,7 @@ void _test_shuffle(std::vector<test_pld_t> &test_input) {
 
     // compute reference
     std::vector<test_pld_t> ref_result;
-    ref_result.resize(1024 * num_lanes);
+    ref_result.resize(BUF_SIZE * num_lanes);
     std::fill(ref_result.begin(), ref_result.end(), test_pld_t({0,0,0,0}));
     compute_ref(test_input, ref_result);
     std::cout << "Reference Compute Success!" << std::endl;
@@ -470,7 +388,7 @@ void _test_shuffle(std::vector<test_pld_t> &test_input) {
     // std::cout << "REF ALL:\n" << ref_result;
     // std::cout << "RES ALL:\n" << kernel_result;
     // verify
-    verify(ref_result, kernel_result);
+    return verify(ref_result, kernel_result);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -485,8 +403,8 @@ void uniform_gen(
     unsigned rotate
 ) {
     // the input buffer size is 1024
-    assert(1 + (len + 2) * parts < 1024);
-    test_input.resize(1024 * num_lanes);
+    assert(1 + (len + 2) * parts < BUF_SIZE);
+    test_input.resize(BUF_SIZE * num_lanes);
     std::vector<test_pld_t> input_buckets[num_lanes];
     for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
         input_buckets[ILid].resize(1 + (len + 2) * parts);
@@ -532,8 +450,8 @@ void conflict_gen(
     unsigned num_olanes
 ) {
     // the input buffer size is 1024
-    assert(1 + (len + 2) * parts < 1024);
-    test_input.resize(1024 * num_lanes);
+    assert(1 + (len + 2) * parts < BUF_SIZE);
+    test_input.resize(BUF_SIZE * num_lanes);
     std::vector<test_pld_t> input_buckets[num_lanes];
     for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
         input_buckets[ILid].resize(1 + (len + 2) * parts);
@@ -581,8 +499,8 @@ void random_gen(
 ) {
     unsigned len_var = avg_len / 2;
     // the input buffer size is 1024
-    assert(1 + (avg_len + len_var + 2) * parts < 1024);
-    test_input.resize(1024 * num_lanes);
+    assert(1 + (avg_len + len_var + 2) * parts < BUF_SIZE);
+    test_input.resize(BUF_SIZE * num_lanes);
     std::vector<test_pld_t> input_buckets[num_lanes];
     unsigned len_table[num_lanes];
     for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
@@ -624,56 +542,76 @@ void random_gen(
 }
 
 
-// TEST(Build, Synthesize) {
-//     synthesize_tb(false);
-// }
-
-// TEST(Build, Setup) {
-//     synthesize_tb(true);
-// }
-
-// TEST(Uniform, Direct) {
-//     std::vector<test_pld_t> test_input;
-//     uniform_gen(test_input, 64, 4, 0);
-//     _test_shuffle(test_input);
-// }
-
-// TEST(Uniform, Rotated) {
-//     std::vector<test_pld_t> test_input;
-//     uniform_gen(test_input, 16, 4, 1);
-//     _test_shuffle(test_input);
-//     uniform_gen(test_input, 16, 4, 3);
-//     _test_shuffle(test_input);
-//     uniform_gen(test_input, 16, 4, 7);
-//     _test_shuffle(test_input);
-// }
-
-// TEST(Uniform, Conflict) {
-//     std::vector<test_pld_t> test_input;
-//     conflict_gen(test_input, 16, 4, 1);
-//     _test_shuffle(test_input);
-//     conflict_gen(test_input, 16, 4, 3);
-//     _test_shuffle(test_input);
-//     conflict_gen(test_input, 32, 4, 5);
-//     _test_shuffle(test_input);
-// }
-
-TEST(Random, A) {
+bool test_unifrom_direct() {
+    std::cout << "------ Running test: uniform direct " << std::endl;
     std::vector<test_pld_t> test_input;
-    random_gen(test_input, 64, 4);
-    _test_shuffle(test_input);
+    uniform_gen(test_input, 8, 4, 0);
+    if (_test_shuffle(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
 }
 
-// TEST(CleanUp, CleanProjDir) {
-//     clean_proj_folder();
-// }
+bool test_uniform_rotated(unsigned rotate) {
+    std::cout << "------ Running test: uniform rotate " << rotate << " " << std::endl;
+    std::vector<test_pld_t> test_input;
+    uniform_gen(test_input, 16, 4, rotate);
+    if (_test_shuffle(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
+}
+
+bool test_conflict(unsigned out_lanes) {
+    std::cout << "------ Running test: conflict " << out_lanes << " out lanes" << std::endl;
+    std::vector<test_pld_t> test_input;
+    conflict_gen(test_input, 16, 4, out_lanes);
+    if (_test_shuffle(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
+}
+
+bool test_random() {
+    std::cout << "------ Running test: random " << std::endl;
+    std::vector<test_pld_t> test_input;
+    random_gen(test_input, 64, 4);
+    if (_test_shuffle(test_input)) {
+        std::cout << "Test passed" << std::endl;
+        return true;
+    } else {
+        std::cout << "Test Failed" << std::endl;
+        return false;
+    }
+}
 
 //--------------------------------------------------------------------------------------------------
 // main
 //--------------------------------------------------------------------------------------------------
 int main(int argc, char ** argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    bool passed = true;
+    passed = passed && test_unifrom_direct();
+    passed = passed && test_uniform_rotated(1);
+    passed = passed && test_uniform_rotated(2);
+    passed = passed && test_uniform_rotated(5);
+    passed = passed && test_uniform_rotated(7);
+    passed = passed && test_conflict(1);
+    passed = passed && test_conflict(2);
+    passed = passed && test_conflict(4);
+    passed = passed && test_conflict(7);
+    passed = passed && test_random();
+
+    std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
+    return passed ? 0 : 1;
 }
 
 #pragma GCC diagnostic pop

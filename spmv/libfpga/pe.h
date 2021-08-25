@@ -5,7 +5,18 @@
 #include <ap_int.h>
 
 #include "common.h"
+
+#ifdef __SYNTHESIS__
 #include "utils/x_hls_utils.h" // for reg() function
+#else
+#ifndef REG_FOR_SW_EMU
+#define REG_FOR_SW_EMU
+template<typename T>
+T reg(T in) {
+    return in;
+}
+#endif
+#endif
 
 #ifndef __SYNTHESIS__
 // #define PE_LINE_TRACING
@@ -41,7 +52,7 @@ void ufixed_pe_process(
     while (!exit) {
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
-        #pragma HLS dependence variable=ifwq intra ture
+        #pragma HLS dependence variable=ifwq intra true
         UPDATE_PLD_T pld = input.read();
         bool valid = true;
 #ifdef PE_LINE_TRACING
@@ -62,8 +73,10 @@ void ufixed_pe_process(
                           ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
                           ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
                           q;
-            VAL_T new_q = reg(q_fwd + incr); // force a register after addition
-            output_buffer[bank_addr] = new_q;
+            VAL_T new_q = q_fwd + incr;
+            #pragma HLS bind_op variable=new_q op=add impl=dsp latency=0
+            VAL_T new_q_reg = reg(new_q); // force a register after addition
+            output_buffer[bank_addr] = new_q_reg;
             ifwq[4] = ifwq[3];
             ifwq[3] = ifwq[2];
             ifwq[2] = ifwq[1];
@@ -110,7 +123,7 @@ void ufixed_pe_output(
 // unsigned fixed-point pe
 //----------------------------------------------------------------
 template<int id, unsigned bank_size, unsigned pack_size>
-void ufixed_pe(
+void pe(
     hls::stream<UPDATE_PLD_T> &input,
     hls::stream<VEC_PLD_T> &output,
     const unsigned used_buf_len

@@ -1,5 +1,6 @@
 TARGET := hw_emu
 UNIT := pe_tb
+IMPL := float
 
 DEVICE = /opt/xilinx/platforms/xilinx_u280_xdma_201920_3/xilinx_u280_xdma_201920_3.xpfm
 
@@ -9,7 +10,11 @@ IMP_DIR := ./$(UNIT)_build_dir.$(TARGET)
 VPP := v++
 
 CLFLAGS += -t $(TARGET) -g --platform $(DEVICE) --save-temps
-CLFLAGS += -I../spmv/libfpga
+ifeq ($(IMPL), float)
+	CLFLAGS += -I../spmv-fp/libfpga
+else
+	CLFLAGS += -I../spmv/libfpga
+endif
 
 emconfig.json:
 	emconfigutil --platform $(DEVICE)
@@ -30,4 +35,4 @@ clean:
 .PHONY: cleanall
 cleanall: clean
 	rm -rf emconfig.json
-	rm -rf $(HLS_DIR) $(IMP_DIR)
+	rm -rf *_x.* *_build_dir.*

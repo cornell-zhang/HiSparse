@@ -7,7 +7,8 @@
 #include "common.h"
 #include "shuffle.h"
 #include "vecbuf_access_unit.h"
-#include "pe.h"
+// #include "pe-pob.h"
+#include "pe-stall.h"
 
 #include <hls_stream.h>
 #include <ap_fixed.h>
@@ -78,8 +79,7 @@ void CPSR_matrix_loader(
                 #pragma HLS UNROLL
                 if (i < stream_length[k]) {
                     if (mat_pkt.indices.data[k] == IDX_MARKER) {
-                        // Be careful: mat_pkt.vals.data[k] can not be larger than power(2, 8)
-                        row_idx[k] += (PACK_SIZE * mat_pkt.vals.data[k](31, 32-IBITS));
+                        row_idx[k] += (PACK_SIZE * val2bit(mat_pkt.vals.data[k]));
                     } else {
                         EDGE_PLD_T input_to_SF_1;
                         input_to_SF_1.mat_val = mat_pkt.vals.data[k];
@@ -117,7 +117,7 @@ void spmv_vector_unpacker (
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS unroll
             VEC_PLD_T p;
-            VAL_T_BITCAST(p.val) = VEC_AXIS_VAL(pkt, k);
+            p.val = bit2val(VEC_AXIS_VAL(pkt, k));
             p.idx = VEC_AXIS_PKT_IDX(pkt) * PACK_SIZE + k;
             p.inst = pkt.user;
             vec_out[k].write(p);
@@ -145,7 +145,7 @@ void spmv_result_packer (
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS unroll
             VEC_PLD_T p = res_in[k].read();
-            VEC_AXIS_VAL(pkt, k) = VAL_T_BITCAST(p.val);
+            VEC_AXIS_VAL(pkt, k) = val2bit(p.val);
             switch (p.inst) {
                 case SOD:
                     got_SOD[k] = 1;

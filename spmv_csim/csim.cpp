@@ -1,10 +1,4 @@
 #include "common.h"
-#include "math_constants.h"
-#include "shuffle.h"
-#include "ufixed_pe_fwd.h"
-#include "vecbuf_access_unit.h"
-#include "stream_utils.h"
-#include "spmv_cluster.h"
 #include "k2k_relay.h"
 #include "spmv_result_drain.h"
 #include "spmv_vector_loader.h"
@@ -48,8 +42,7 @@ void top_wrapper (
     const unsigned part_len,                  // in
     const unsigned num_col_partitions,        // in
     const unsigned num_partitions,            // in
-    const unsigned num_cols,                  // in
-    const OP_T Op                             // in
+    const unsigned num_cols                   // in
 ) {
     hls::stream<VEC_AXIS_T> vec_VL_to_SK0, vec_VL_to_SK1, vec_VL_to_relay, vec_relay_to_SK2;
     hls::stream<VEC_AXIS_T> res_SK0_to_RD, res_SK1_to_RD, res_SK2_to_relay, res_relay_to_RD;
@@ -77,8 +70,7 @@ void top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     std::cout << "INFO : [top wrapper] Sub-kernel 0 Complete" << std::endl;
@@ -95,8 +87,7 @@ void top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     std::cout << "INFO : [top wrapper] Sub-kernel 1 Complete" << std::endl;
@@ -120,8 +111,7 @@ void top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions,
-        Op
+        num_partitions
     );
 
     std::cout << "INFO : [top wrapper] Sub-kernel 2 Complete" << std::endl;
@@ -136,7 +126,6 @@ void top_wrapper (
     spmv_result_drain (
         packed_dense_result,
         row_part_id,
-        // part_len,
         res_SK0_to_RD,
         res_SK1_to_RD,
         res_relay_to_RD
@@ -213,7 +202,6 @@ void unpack_vector(
 
 bool spmv_test_harness (
     spmv::io::CSRMatrix<float> &ext_matrix,
-    const OP_T Op,
     bool skip_empty_rows
 ) {
     using namespace spmv::io;
@@ -289,21 +277,6 @@ bool spmv_test_harness (
     //--------------------------------------------------------------------
     // generate input vector
     //--------------------------------------------------------------------
-    VAL_T Zero;
-    switch (Op) {
-        case MULADD:
-            Zero = MulAddZero;
-            break;
-        case ANDOR:
-            Zero = AndOrZero;
-            break;
-        case ADDMIN:
-            Zero = AddMinZero;
-            break;
-        default:
-            Zero = MulAddZero;
-            break;
-    }
     std::vector<float> vector_f(ext_matrix.num_cols);
     std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
     std::vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
@@ -319,7 +292,7 @@ bool spmv_test_harness (
     std::vector<PACKED_VAL_T> result(mat.num_rows / PACK_SIZE);
     for (size_t i = 0; i < result.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
-            result[i].data[k] = Zero;
+            result[i].data[k] = 0;
         }
     }
     std::cout << "INFO : Input/result initialization complete!" << std::endl;
@@ -365,8 +338,7 @@ bool spmv_test_harness (
             part_len,
             num_col_partitions,
             num_partitions,
-            mat.num_cols,
-            Op
+            mat.num_cols
         );
     }
     std::cout << "INFO : SpMV kernel complete!" << std::endl;
@@ -427,7 +399,7 @@ bool test_basic() {
             "data/sparse_matrix_graph/dense_128_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, MULADD, false)) {
+    if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -439,7 +411,7 @@ bool test_basic() {
 bool test_basic_sparse() {
     std::cout << "------ Running test: on basic sparse matrix " << std::endl;
     spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
-    if (spmv_test_harness(mat_f, MULADD, false)) {
+    if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -456,7 +428,7 @@ bool test_large_sparse() {
             "data/sparse_matrix_graph/uniform_100K_10_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, MULADD, false)) {
+    if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -473,7 +445,7 @@ bool test_gplus() {
             "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, MULADD, false)) {
+    if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -490,7 +462,7 @@ bool test_ogbl_ppa() {
             "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, MULADD, false)) {
+    if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -507,7 +479,7 @@ bool test_orkut() {
             "data/sparse_matrix_graph/orkut_3M_213M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, MULADD, true)) {
+    if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -523,10 +495,10 @@ bool test_orkut() {
 int main (int argc, char** argv) {
     bool passed = true;
     passed = passed && test_basic();
-    // passed = passed && test_basic_sparse();
-    // passed = passed && test_large_sparse();
-    // passed = passed && test_gplus();
-    // passed = passed && test_ogbl_ppa();
+    passed = passed && test_basic_sparse();
+    passed = passed && test_large_sparse();
+    passed = passed && test_gplus();
+    passed = passed && test_ogbl_ppa();
     passed = passed && test_orkut();
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
