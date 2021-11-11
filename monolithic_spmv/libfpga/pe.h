@@ -53,7 +53,6 @@ void ufixed_pe_process(
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
         #pragma HLS dependence variable=ifwq intra true
-        // TODO: use non-blocking read to ensure IFWQ is shifted every cycle?
         UPDATE_PLD_T pld = input.read();
         bool valid = true;
 #ifdef PE_LINE_TRACING

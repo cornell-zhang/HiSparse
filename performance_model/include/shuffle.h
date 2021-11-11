@@ -9,11 +9,6 @@
 #ifndef __SYNTHESIS__
 #include <iostream>
 #include <iomanip>
-// bool line_tracing_shuffle = false;
-// bool line_tracing_shuffle_core = false;
-// bool csim_abort_shuffle_core = false;
-// unsigned max_iter_limit_shuffle_core = 100;
-unsigned long long iter_cnt = 0;
 #endif
 
 const unsigned ARBITER_LATENCY = 5;
@@ -50,7 +45,6 @@ void arbiter_1p(
         in_addr[i] = in_pld[i].col_idx;
     }
 
-    // array_rotate_left<IDX_T, num_lanes>(in_addr, arb_p_in_addr, rotate_priority);
     arb_p_in_valid.rrotate(rotate_priority);
 
     loop_A_arbsearch:
@@ -76,8 +70,6 @@ void arbiter_1p(
         }
     }
 
-    // array_cyclic_add<unsigned, num_lanes, num_lanes>(xbar_sel, out_valid, rotate_priority);
-
     loop_A_grant:
     for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
         #pragma HLS unroll
@@ -88,14 +80,7 @@ void arbiter_1p(
         in_resend[ILid] = (in_valid[ILid] && !in_granted) ? 1 : 0;
         resend_pld[ILid] = in_pld[ILid];
     }
-// #ifndef __SYNTHESIS__
-//     std::cout << "  Arbiter: "
-//               << "RP: " << rotate_priority << ", "
-//               << "in_valid: " << std::hex << (int)in_valid << std::dec << ", "
-//               << "in_p_valid: " << std::hex << (int)arb_p_in_valid << std::dec << ", "
-//               << "out_valid: " << std::hex << (int)out_valid << std::dec << ", "
-//               << "in_resend: " << std::hex << (int)in_resend << std::dec << std::endl;
-// #endif
+
 }
 
 // arbiter for UPDATE_PLD_T (depends on row_idx)
@@ -166,14 +151,6 @@ void arbiter_1p(
         in_resend[ILid] = (in_valid[ILid] && !in_granted) ? 1 : 0;
         resend_pld[ILid] = in_pld[ILid];
     }
-// #ifndef __SYNTHESIS__
-//     std::cout << "  Arbiter: "
-//               << "RP: " << rotate_priority << ", "
-//               << "in_valid: " << std::hex << (int)in_valid << std::dec << ", "
-//               << "in_p_valid: " << std::hex << (int)arb_p_in_valid << std::dec << ", "
-//               << "out_valid: " << std::hex << (int)out_valid << std::dec << ", "
-//               << "in_resend: " << std::hex << (int)in_resend << std::dec << std::endl;
-// #endif
 }
 
 // shuffler states
@@ -182,7 +159,7 @@ void arbiter_1p(
 
 // shuffler core: works on 1 partition
 template<typename PayloadT, unsigned num_lanes>
-void shuffler_core(
+unsigned long long shuffler_core(
     // fifos
     hls::stream<PayloadT> input_lanes[num_lanes],
     hls::stream<PayloadT> output_lanes[num_lanes]
@@ -219,9 +196,7 @@ void shuffler_core(
     unsigned rotate_priority = 0;
     unsigned next_rotate_priority = 0;
 
-#ifndef __SYNTHESIS__
-    int iteration_cnt = 0;
-#endif
+    unsigned long long iteration_cnt = 0;
 
     loop_shuffle_pipeline:
     while (!loop_exit) {
@@ -231,21 +206,6 @@ void shuffler_core(
         // #pragma HLS dependence variable=in_addr inter RAW true distance=6
 
         // Fetch stage (F)
-// #ifndef __SYNTHESIS__
-//         if (line_tracing_shuffle_core) {
-//             if (loop_extra_iters == shuffler_extra_iters) {
-//                 std::cout << "Iteration: " << iteration_cnt << ", "
-//                         << "State: " << (int)state << ", "
-//                         << "loop_extra_iters:" << loop_extra_iters << std::endl;
-//             } else if (loop_extra_iters == 1) {
-//                 std::cout << "Iteration: " << iteration_cnt << ", "
-//                         << "State: " << (int)state << ", "
-//                         << "loop_extra_iters:" << loop_extra_iters << std::endl;
-//             } else {
-//                 std::cout << "." << std::flush;
-//             }
-//         }
-// #endif
         for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
             #pragma HLS unroll
             if (resend[ILid]) {
@@ -267,17 +227,6 @@ void shuffler_core(
                     payload[ILid] = (PayloadT){0,0,0,0};
                 }
             }
-// #ifndef __SYNTHESIS__
-//             if (line_tracing_shuffle_core) {
-//                 if (state == SF_WORKING) {
-//                     std::cout << "  Shuffle core: ILane " << ILid << ", "
-//                             << "resend: " << (resend[ILid] ? "x" : ".") << ", "
-//                             << "payload: " << payload[ILid] << ", "
-//                             << "valid:" << (valid[ILid] ? "x" : ".") << ", "
-//                             << "fetch complete: " << (fetch_complete[ILid] ? "x" : ".") << std::endl;
-//                 }
-//             }
-// #endif
         }
 
         switch (state) {
@@ -317,43 +266,26 @@ void shuffler_core(
                     output_lanes[OLid].write(payload[xbar_sel[OLid]]);
                 }
             }
-// #ifndef __SYNTHESIS__
-//             if (line_tracing_shuffle_core) {
-//                 if (state == SF_WORKING) {
-//                     std::cout << "  Shuffle core: OLane " << OLid << ", "
-//                             << "sel: " << xbar_sel[OLid] << ", "
-//                             << "payload: " << payload[xbar_sel[OLid]] << ", "
-//                             << "p-valid:" << (valid[xbar_sel[OLid]] ? "x" : ".") << ", "
-//                             << "x-valid: " << (xbar_valid[OLid] ? "x" : ".") << std::endl;
-//                 }
-//             }
-// #endif
         }
         // ------- end of C stage
+        iteration_cnt ++;
 
-        // line tracing for debug
-// #ifndef __SYNTHESIS__
-//         iteration_cnt++;
-//         if (csim_abort_shuffle_core && iteration_cnt > max_iter_limit_shuffle_core) {
-//             std::cout << "WARNING: shuffle core exceeds the sw_emu iteration limit!" << std::endl;
-//             return;
-//         }
-// #endif
     } // main while() loop ends here
 
     for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
         #pragma HLS unroll
         output_lanes[OLid].write((PayloadT){0,0,0,EOD});
     }
-
+    return iteration_cnt;
 }
 
 // shuffler: works on EDGE_PLD_T and UPDATE_PLD_T
 template<typename PayloadT, unsigned num_lanes>
-void shuffler(
+unsigned long long shuffler(
     hls::stream<PayloadT> input_lanes[num_lanes],
     hls::stream<PayloadT> output_lanes[num_lanes]
 ) {
+    unsigned long long total_iter_cnt = 0;
     bool first_launch = true;
     ap_uint<num_lanes> got_EOS = 0;
     while (!got_EOS.and_reduce()) {
@@ -369,11 +301,6 @@ void shuffler(
                     if (!got_SOD[ILid]) {
                         PayloadT p;
                         if (input_lanes[ILid].read_nb(p)) {
-// #ifndef __SYNTHESIS__
-//                             if (line_tracing_shuffle) {
-//                                 std::cout << "Shuffle: Lane " << ILid << " got payload:" << p << std::endl;
-//                             }
-// #endif
                             if (p.inst == SOD) {
                                 got_SOD[ILid] = 1;
                             }
@@ -382,11 +309,6 @@ void shuffler(
                 }
             } // while() : sync on first SOD
             first_launch = false;
-// #ifndef __SYNTHESIS__
-//             if (line_tracing_shuffle) {
-//                 std::cout << "Shuffle: successfully synced on first SOD" << std::endl;
-//             }
-// #endif
         } // first launch SOD sync
 
         for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
@@ -394,12 +316,7 @@ void shuffler(
             output_lanes[OLid].write((PayloadT){0,0,0,SOD});
         }
 
-        shuffler_core<PayloadT, num_lanes>(input_lanes, output_lanes);
-// #ifndef __SYNTHESIS__
-//         if (line_tracing_shuffle) {
-//             std::cout << "Shuffle: shuffler_core complete" << std::endl;
-//         }
-// #endif
+        total_iter_cnt += shuffler_core<PayloadT, num_lanes>(input_lanes, output_lanes);
 
         got_SOD = 0;
         loop_sync_on_SOD_EOS:
@@ -418,18 +335,7 @@ void shuffler(
                     }
                 }
             }
-// #ifndef __SYNTHESIS__
-//             if (line_tracing_shuffle) {
-//                 if (got_SOD.and_reduce()) {
-//                     std::cout << "Shuffle: successfully synced on SOD" << std::endl;
-//                 }
-//                 if (got_EOS.and_reduce()) {
-//                     std::cout << "Shuffle: successfully synced on EOS" << std::endl;
-//                 }
-//             }
-// #endif
         } // while() : EOS or SOD sync
-
 
     } // while() : EOS sync
 
@@ -437,6 +343,7 @@ void shuffler(
         #pragma HLS unroll
         output_lanes[OLid].write((PayloadT){0,0,0,EOS});
     }
+    return total_iter_cnt;
 }
 
 

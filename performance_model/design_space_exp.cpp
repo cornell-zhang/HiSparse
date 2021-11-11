@@ -13,7 +13,10 @@
 
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <assert.h>
+#include <chrono>
+#include <cmath>
 
 //---------------------------------------------------------------
 // C-simulation wrapper
@@ -42,7 +45,11 @@ unsigned long long top_wrapper (
     const unsigned part_len,                  // in
     const unsigned num_col_partitions,        // in
     const unsigned num_partitions,            // in
-    const unsigned num_cols                   // in
+    const unsigned num_cols,                  // in
+    const unsigned vb_bank_size,              // in
+    const unsigned ob_bank_size,              // in
+    const unsigned logical_vb_size,           // in
+    const unsigned logical_ob_size            // in
 ) {
     hls::stream<VEC_AXIS_T> vec_VL_to_SK0, vec_VL_to_SK1, vec_VL_to_relay, vec_relay_to_SK2;
     hls::stream<VEC_AXIS_T> res_SK0_to_RD, res_SK1_to_RD, res_SK2_to_relay, res_relay_to_RD;
@@ -56,7 +63,8 @@ unsigned long long top_wrapper (
         num_cols,
         vec_VL_to_SK0,
         vec_VL_to_SK1,
-        vec_VL_to_relay
+        vec_VL_to_relay,
+        logical_vb_size
     );
 
     // std::cout << "INFO : [top wrapper] Vector Loader Complete" << std::endl;
@@ -71,7 +79,9 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        vb_bank_size,
+        ob_bank_size
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 0 Complete" << std::endl;
@@ -88,7 +98,9 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        vb_bank_size,
+        ob_bank_size
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 1 Complete" << std::endl;
@@ -112,7 +124,9 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        vb_bank_size,
+        ob_bank_size
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 2 Complete" << std::endl;
@@ -129,7 +143,8 @@ unsigned long long top_wrapper (
         row_part_id,
         res_SK0_to_RD,
         res_SK1_to_RD,
-        res_relay_to_RD
+        res_relay_to_RD,
+        logical_ob_size
     );
 
     // std::cout << "INFO : [top wrapper] Result Drain Complete" << std::endl;
@@ -141,85 +156,61 @@ unsigned long long top_wrapper (
 //--------------------------------------------------------------------------------------------------
 // reference and verify utils
 //--------------------------------------------------------------------------------------------------
-
-// TODO: only support MULADD now!
-void compute_ref(
-    spmv::io::CSRMatrix<float> &mat,
-    std::vector<float> &vector,
-    std::vector<float> &ref_result
-) {
-    ref_result.resize(mat.num_rows);
-    std::fill(ref_result.begin(), ref_result.end(), 0);
-    for (size_t row_idx = 0; row_idx < mat.num_rows; row_idx++) {
-        IDX_T start = mat.adj_indptr[row_idx];
-        IDX_T end = mat.adj_indptr[row_idx + 1];
-        for (size_t i = start; i < end; i++) {
-            IDX_T idx = mat.adj_indices[i];
-            ref_result[row_idx] += mat.adj_data[i] * vector[idx];
-        }
+size_t count_bytes_cpsr_matrix(spmv::io::CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE>& cpsr_matrix) {
+    size_t n_bytes = 0;
+    for (auto x: cpsr_matrix.formatted_adj_data) {
+        n_bytes += x.size() * 4 * PACK_SIZE;
     }
+    for (auto x: cpsr_matrix.formatted_adj_indices) {
+        n_bytes += x.size() * 4 * PACK_SIZE;
+    }
+    for (auto x: cpsr_matrix.formatted_adj_indptr) {
+        n_bytes += x.size() * 4 * PACK_SIZE;
+    }
+    return n_bytes;
 }
-
-bool verify(std::vector<float> reference_results,
-            std::vector<VAL_T> kernel_results) {
-    float epsilon = 0.0001;
-    if (reference_results.size() != kernel_results.size()) {
-        std::cout << "Error: Size mismatch"
-                      << std::endl;
-        std::cout   << "  Reference result size: " << reference_results.size()
-                    << "  Kernel result size: " << kernel_results.size()
-                    << std::endl;
-        return false;
-    }
-    for (size_t i = 0; i < reference_results.size(); i++) {
-        bool match = abs(float(kernel_results[i]) - reference_results[i]) < epsilon;
-        if (!match) {
-            std::cout << "Error: Result mismatch"
-                      << std::endl;
-            std::cout << "  i = " << i
-                      << "  Reference result = " << reference_results[i]
-                      << "  Kernel result = " << kernel_results[i]
-                      << std::endl;
-            return false;
-        }
-    }
-    return true;
-}
-
-void unpack_vector(
-    std::vector<PACKED_VAL_T> &pdv,
-    std::vector<VAL_T> &dv
-) {
-    dv.resize(pdv.size() * PACK_SIZE);
-    for (size_t i = 0; i < pdv.size(); i++) {
-        for (size_t k = 0; k < PACK_SIZE; k++) {
-            dv[i * PACK_SIZE + k] = pdv[i].data[k];
-        }
-    }
-}
-
 
 //---------------------------------------------------------------
 // test harness
 //---------------------------------------------------------------
+struct test_result_t{
+    bool pass;
+    double est_throughput;
+    double pre_proc_time_ms;
+};
 
-bool spmv_test_harness (
+std::ostream& operator<<(std::ostream& os, const test_result_t &p) {
+    os << (p.pass ? "Testcase passed" : "Testcase FAILED") << ", "
+       << "estimated throughput: " << p.est_throughput << " OPs/cycle, "
+       << "pre-processing time: " << p.pre_proc_time_ms << " ms";
+    return os;
+}
+
+test_result_t spmv_test_harness (
     spmv::io::CSRMatrix<float> &ext_matrix,
-    bool skip_empty_rows
+    const unsigned vb_bank_size,
+    const unsigned ob_bank_size
 ) {
     using namespace spmv::io;
-
+    using namespace std::chrono;
+    bool skip_empty_rows = true;
     //--------------------------------------------------------------------
     // load and format the matrix
     //--------------------------------------------------------------------
-    std::cout << "INFO : Test started" << std::endl;
+    // std::cout << "INFO : Test started" << std::endl;
     util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
+
+    unsigned OB_PER_CLUSTER = ob_bank_size * PACK_SIZE;
+    unsigned VB_PER_CLUSTER = vb_bank_size * PACK_SIZE;
+    unsigned LOGICAL_OB_SIZE = (SK0_CLUSTER + SK1_CLUSTER + SK2_CLUSTER) * OB_PER_CLUSTER;
+    unsigned LOGICAL_VB_SIZE = VB_PER_CLUSTER;
 
     size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
     size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
     size_t num_partitions = num_row_partitions * num_col_partitions;
     size_t num_virtual_hbm_channels = NUM_HBM_CHANNELS * INTERLEAVE_FACTOR;
+    auto t0 = high_resolution_clock::now();
     CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE> cpsr_matrix
         = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
             mat,
@@ -229,6 +220,8 @@ bool spmv_test_harness (
             num_virtual_hbm_channels,
             skip_empty_rows
         );
+    auto t1 = high_resolution_clock::now();
+    double time_in_ms = double(duration_cast<microseconds>(t1 - t0).count()) / 1000;
     using partition_indptr_t = struct {IDX_T start; PACKED_IDX_T nnz;};
     using ch_partition_indptr_t = std::vector<partition_indptr_t>;
     using ch_packed_idx_t = std::vector<PACKED_IDX_T>;
@@ -298,7 +291,7 @@ bool spmv_test_harness (
             }
         }
     }
-    std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
+    // std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
 
     //--------------------------------------------------------------------
     // generate input vector
@@ -321,15 +314,20 @@ bool spmv_test_harness (
             result[i].data[k] = 0;
         }
     }
-    std::cout << "INFO : Input/result initialization complete!" << std::endl;
+    // std::cout << "INFO : Input/result initialization complete!" << std::endl;
 
     //--------------------------------------------------------------------
     // invoke kernel
     //--------------------------------------------------------------------
-    std::cout << "INFO : Invoking kernel:" << std::endl;
-    std::cout << "  row_partitions: " << num_row_partitions << std::endl;
-    std::cout << "  col_partitions: " << num_col_partitions << std::endl;
+    // std::cout << "INFO : Invoking kernel:" << std::endl;
+    // std::cout << "  row_partitions: " << num_row_partitions << std::endl;
+    // std::cout << "  col_partitions: " << num_col_partitions << std::endl;
     unsigned long long sf1_iter_cnt = 0;
+    size_t total_bytes = 0;
+    for (size_t i = 0; i < NUM_HBM_CHANNELS; i++) {
+        total_bytes += (channel_packets[i].size() * 8 * PACK_SIZE);
+        // std::cout << "Channel " << i << " # of packets " << channel_packets[i].size() << std::endl;
+    }
     size_t rows_per_ch_in_last_row_part;
     if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
         rows_per_ch_in_last_row_part = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
@@ -364,25 +362,34 @@ bool spmv_test_harness (
             part_len,
             num_col_partitions,
             num_partitions,
-            mat.num_cols
+            mat.num_cols,
+            vb_bank_size,
+            ob_bank_size,
+            LOGICAL_VB_SIZE,
+            LOGICAL_OB_SIZE
         );
     }
-    std::cout << "INFO : SpMV kernel complete!" << std::endl;
-    std::cout << "INFO : Max Shuffle 1 iteration count: " << sf1_iter_cnt << std::endl;
+    // std::cout << "INFO : SpMV kernel complete!" << std::endl;
+    // std::cout << "INFO : Max Shuffle 1 iteration count: " << sf1_iter_cnt << std::endl;
+    // std::cout << "INFO : Nnz: " << nnz << std::endl;
+    size_t nnz = mat.adj_data.size();
+    double alpha = double(nnz/(NUM_HBM_CHANNELS * PACK_SIZE)) / double(sf1_iter_cnt);
+    double beta = double(8 * nnz) / total_bytes;
+    double p = (alpha < beta ? alpha : beta) * (NUM_HBM_CHANNELS * PACK_SIZE);
+    double TM = nnz / p;
+    double TV = mat.num_cols / PACK_SIZE * num_row_partitions;
+    double TW = mat.num_rows / PACK_SIZE;
+    double T = (TM > TV ? TM : TV) + TW;
+    double est_throughput = 2 * nnz / T;
+    // std::cout << "INFO : alpha =  " << alpha << ", "
+    //           << "beta =  " << beta << ", "
+    //           << "p =  " << p << std::endl;
 
-    //--------------------------------------------------------------------
-    // compute reference
-    //--------------------------------------------------------------------
-    std::vector<float> ref_result;
-    compute_ref(ext_matrix, vector_f, ref_result);
-    std::cout << "INFO : Compute reference complete!" << std::endl;
-
-    //--------------------------------------------------------------------
-    // verify
-    //--------------------------------------------------------------------
-    std::vector<VAL_T> upk_result;
-    unpack_vector(result, upk_result);
-    return verify(ref_result, upk_result);
+    test_result_t ret;
+    ret.pass = true;
+    ret.est_throughput = est_throughput;
+    ret.pre_proc_time_ms = time_in_ms;
+    return ret;
 }
 
 //---------------------------------------------------------------
@@ -418,186 +425,68 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
-bool test_basic() {
-    std::cout << "------ Running test: on basic dense matrix" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/dense_128_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, false)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
-
-bool test_basic_sparse() {
-    std::cout << "------ Running test: on basic sparse matrix" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
-    if (spmv_test_harness(mat_f, false)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
-
-bool test_large_sparse() {
-    std::cout << "------ Running test: on uniform 100K 10" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/uniform_100K_10_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, false)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
-
-bool test_gplus() {
-    std::cout << "------ Running test: on google_plus" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
-        );
+test_result_t test(const unsigned vb_bank_size, const unsigned ob_bank_size, std::string matrix_path) {
+    // std::cout << "------ Running test: on " << matrix_path << std::endl;
+    // std::cout << "ob bank size: " << ob_bank_size << std::endl;
+    // std::cout << "vb bank size: " << vb_bank_size << std::endl;
+    spmv::io::CSRMatrix<float> mat_f = spmv::io::load_csr_matrix_from_float_npz(matrix_path);
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, false)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
+    test_result_t result = spmv_test_harness(mat_f, vb_bank_size, ob_bank_size);
+    // std::cout << "INFO : " << result << std::endl;
+    return result;
 }
 
-bool test_ogbl_ppa() {
-    std::cout << "------ Running test: on ogbl_ppa" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, false)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+//---------------------------------------------------------------
+// evaluate a design point
+//---------------------------------------------------------------
+double run_design_point(const unsigned vb_bank_size, const unsigned ob_bank_size) {
 
-bool test_pokec() {
-    std::cout << "------ Running test: on pokec" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/pokec_1633K_31M_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+    std::string graph_datasets_path = "/work/shared/common/project_build/graphblas/data/sparse_matrix_graph/";
+    std::string ml_datasets_path = "/work/shared/common/project_build/graphblas/data/pruned_neural_network/";
+    double geomean_est_throughput = 1;
+    double dataset_cnt = 0;
+    bool passed = true;
+    test_result_t res;
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "gplus_108K_13M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
 
-bool test_hollywood() {
-    std::cout << "------ Running test: on hollywood" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/hollywood_1M_113M_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "ogbl_ppa_576K_42M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
 
-bool test_ogbn_products() {
-    std::cout << "------ Running test: on ogbn_products" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/ogbn_products_2M_124M_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "pokec_1633K_31M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
 
-bool test_mouse_gene() {
-    std::cout << "------ Running test: on mouse_gene" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/mouse_gene_45K_29M_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "hollywood_1M_113M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
 
-bool test_transformer_50_t() {
-    std::cout << "------ Running test: on transformer-50-t" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/pruned_neural_network/transformer_50_512_33288_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
-}
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "ogbn_products_2M_124M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
 
-bool test_transformer_95_t() {
-    std::cout << "------ Running test: on transformer-95-t" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/pruned_neural_network/transformer_95_512_33288_csr_float32.npz"
-        );
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
-        std::cout << "INFO : Testcase passed." << std::endl;
-        return true;
-    } else {
-        std::cout << "INFO : Testcase failed." << std::endl;
-        return false;
-    }
+    res = test(vb_bank_size, ob_bank_size, graph_datasets_path + "mouse_gene_45K_29M_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
+
+    res = test(vb_bank_size, ob_bank_size, ml_datasets_path + "transformer_50_512_33288_csr_float32.npz");
+    geomean_est_throughput *= res.est_throughput;
+    passed = passed && res.pass;
+    dataset_cnt++;
+
+    geomean_est_throughput = pow(geomean_est_throughput, 1.0/dataset_cnt);
+
+    // std::cout << "=======================================" << std::endl;
+    std::cout << "Geometric mean of estimated throughput: "<< geomean_est_throughput << std::endl;
+    return geomean_est_throughput;
 }
 
 //---------------------------------------------------------------
@@ -605,19 +494,54 @@ bool test_transformer_95_t() {
 //---------------------------------------------------------------
 
 int main (int argc, char** argv) {
-    bool passed = true;
-    // passed = passed && test_basic();
-    // passed = passed && test_basic_sparse();
-    // passed = passed && test_large_sparse();
-    passed = passed && test_pokec();
-    passed = passed && test_hollywood();
-    passed = passed && test_gplus();
-    passed = passed && test_ogbl_ppa();
-    passed = passed && test_ogbn_products();
-    passed = passed && test_mouse_gene();
-    // passed = passed && test_transformer_50_t();
-    // passed = passed && test_transformer_95_t();
+    if (argc != 4) {
+        std::cout << "Usage: " << argv[0] << "<result csv file> <v start> <v end>" << std::endl;
+        return 0;
+    }
 
-    std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
-    return passed ? 0 : 1;
+    std::string result_csv = argv[1];
+    std::ofstream csv(result_csv);
+
+    unsigned v_start = atoi(argv[2]);
+    unsigned v_end = atoi(argv[3]);
+
+    const unsigned BLOCK_SIZE = 4096;
+    const unsigned BLOCK_LIMIT = 320;
+    const unsigned MAX_CLUSTER = 6;
+    double recorded_max = 0;
+    unsigned opt_v = 0;
+    unsigned opt_o = 0;
+
+    for (unsigned v = v_start; v <= v_end ; v += 512) {
+        for (unsigned o = 1024; o <= 16384; o += 512) {
+            unsigned vb_blocks = (v + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            unsigned ob_blocks = (o + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            unsigned used_blocks = MAX_CLUSTER * PACK_SIZE * (2 * vb_blocks + ob_blocks);
+            if (used_blocks < BLOCK_LIMIT) {
+                std::cout << "------ Running design point: " << std::endl;
+                std::cout << "ob bank size: " << o << std::endl;
+                std::cout << "vb bank size: " << v << std::endl;
+                double x = run_design_point(v, o);
+                csv << x << std::flush;
+                if (x > recorded_max) {
+                    recorded_max = x;
+                    opt_v = v;
+                    opt_o = o;
+                }
+            } else {
+                csv << "0" << std::flush;
+                std::cout << "------ Skipping INVALID design point: " << std::endl;
+                std::cout << "ob bank size: " << o << std::endl;
+                std::cout << "vb bank size: " << v << std::endl;
+            }
+            csv << ", ";
+        }
+        csv << std::endl;
+    }
+    std::cout << "======= Design Space Exploration Finished =======" << std::endl;
+    std::cout << "optimal ob bank size: " << opt_o << std::endl;
+    std::cout << "optimal vb bank size: " << opt_v << std::endl;
+    std::cout << "maximum estimated throughput: " << recorded_max << std::endl;
+    csv.close();
+    return 0;
 }

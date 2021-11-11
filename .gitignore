@@ -13,6 +13,7 @@
 *build_dir.*
 emconfig.json
 .run
+*.csv
 
 # csim temp dirs
 spmv_csim/csim_headers
@@ -22,6 +23,9 @@ spmv_csim/csim
 sw/benchmark
 sw/host
 unit_tests/test_pe
+performance_model/design_space_exp
+performance_model/performance_model
+monolithic_spmv/host
 
 # hw_emu settings
 xrt.ini

@@ -39,7 +39,7 @@ host: host.cpp
 
 benchmark: benchmark.cpp
 	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
-	./bm.sh
+# ./bm.sh
 
 measure_matrix: measure_matrix.cpp
 	$(CXX) $(CXXFLAGS) $(xcl2_SRCS) $< -o measure_matrix $(LDFLAGS)

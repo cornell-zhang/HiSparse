@@ -81,6 +81,7 @@ void float_pe_acc(
     // ifaq[8] = (IN_FLIGHT_ADD){false, 0};
 
     bool stall = false;
+    VEC_PLD_T pld = (VEC_PLD_T){0,0,0};
 
     pe_process_loop:
     while (!exit) {
@@ -89,19 +90,20 @@ void float_pe_acc(
         #pragma HLS dependence variable=ifaq intra true
 
         bool valid;
-        VEC_PLD_T pld;
         if (!stall) {
             pld = input.read();
             if (pld.inst == EOD) {
                 valid = false;
-                exit = true;
             } else {
                 valid = true;
-                exit = false;
             }
         } else {
             pld = pld;
             valid = true;
+        }
+        if (pld.inst == EOD) {
+            exit = true;
+        } else {
             exit = false;
         }
 
@@ -189,7 +191,6 @@ void pe(
 ) {
     VAL_T output_buffer[bank_size];
     #pragma HLS bind_storage variable=output_buffer type=RAM_2P impl=URAM latency=2
-    #pragma HLS array_partition variable=output_buffer dim=1 complete
 
     // reset output buffer before doing anything
     loop_reset_ob:

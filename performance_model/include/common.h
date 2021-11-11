@@ -23,32 +23,8 @@ const unsigned PACK_SIZE = 8;
 const unsigned IBITS = 8;
 const unsigned FBITS = 32 - IBITS;
 typedef unsigned IDX_T;
-typedef float VAL_T;
-// #define VAL_T_BITCAST(v) (v(31,0))
-
-// used to do bit manipulation on VAL_T
-union VAL_BIT_T {
-    VAL_T as_val;
-    unsigned as_bit;
-
-    VAL_BIT_T(){
-        this->as_bit = 0;
-    }
-};
-
-ap_uint<32> val2bit(VAL_T v) {
-    #pragma HLS inline
-    VAL_BIT_T t;
-    t.as_val = v;
-    return t.as_bit;
-}
-
-VAL_T bit2val(ap_uint<32> b) {
-    #pragma HLS inline
-    VAL_BIT_T t;
-    t.as_bit = b;
-    return t.as_val;
-}
+typedef ap_ufixed<32, IBITS, AP_RND, AP_SAT> VAL_T;
+#define VAL_T_BITCAST(v) (v(31,0))
 
 //-------------------------------------------------------------------------
 // kernel-memory interface packet types
@@ -172,28 +148,31 @@ std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
 // Kernel configurations
 //-------------------------------------------------------------------------
 const unsigned FIFO_DEPTH = 64;
-const unsigned FPADD_LATENCY = 4;
 
-// used for pe-pob
-// const unsigned DEP_DISTANCE = 1 + FPADD_LATENCY + 1 + 1;
-// const unsigned OB_BANK_SIZE = 1024;
+// const unsigned OB_BANK_SIZE = 1024 * 8;
+// const unsigned VB_BANK_SIZE = 1024 * 3;
 
-// used for pe-stall
-const unsigned OB_BANK_SIZE = 1024 * 8;
-// const unsigned OB_BANK_SIZE = 8190;
-const unsigned INTERLEAVE_FACTOR = 8;
+// const unsigned OB_BANK_SIZE = 128;
+// const unsigned VB_BANK_SIZE = 512;
+const unsigned INTERLEAVE_FACTOR = 1;
 
-const unsigned VB_BANK_SIZE = 1024 * 4;
-
-const unsigned OB_PER_CLUSTER = OB_BANK_SIZE * PACK_SIZE;
-const unsigned VB_PER_CLUSTER = VB_BANK_SIZE * PACK_SIZE;
+// const unsigned OB_PER_CLUSTER = OB_BANK_SIZE * PACK_SIZE;
+// const unsigned VB_PER_CLUSTER = VB_BANK_SIZE * PACK_SIZE;
 const unsigned SK0_CLUSTER = 4;
 const unsigned SK1_CLUSTER = 6;
 const unsigned SK2_CLUSTER = 6;
 const unsigned NUM_HBM_CHANNELS = SK0_CLUSTER + SK1_CLUSTER + SK2_CLUSTER;
 
-const unsigned LOGICAL_OB_SIZE = (SK0_CLUSTER + SK1_CLUSTER + SK2_CLUSTER) * OB_PER_CLUSTER;
-const unsigned LOGICAL_VB_SIZE = VB_PER_CLUSTER;
+// const unsigned LOGICAL_OB_SIZE = (SK0_CLUSTER + SK1_CLUSTER + SK2_CLUSTER) * OB_PER_CLUSTER;
+// const unsigned LOGICAL_VB_SIZE = VB_PER_CLUSTER;
 
-// Below kernel configurations will be overwritten by the compiler
+template<unsigned N>
+unsigned long long ull_max(unsigned long long in[N]) {
+    unsigned long long m = 0;
+    for (unsigned i = 0; i < N; i++) {
+        if (in[i] > m) m = in[i];
+    }
+    return m;
+}
+
 #endif  // SPMV_COMMON_H_

@@ -144,19 +144,20 @@ bool spmv_test_harness (
     // load and format the matrix
     //--------------------------------------------------------------------
     std::cout << "INFO : Test started" << std::endl;
-    util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS, PACK_SIZE);
+    util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
 
     size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
     size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
     size_t num_partitions = num_row_partitions * num_col_partitions;
+    size_t num_virtual_hbm_channels = NUM_HBM_CHANNELS * INTERLEAVE_FACTOR;
     CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE> cpsr_matrix
         = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
             mat,
             IDX_MARKER,
             LOGICAL_OB_SIZE,
             LOGICAL_VB_SIZE,
-            NUM_HBM_CHANNELS,
+            num_virtual_hbm_channels,
             skip_empty_rows
         );
     using partition_indptr_t = struct {IDX_T start; PACKED_IDX_T nnz;};
@@ -164,46 +165,68 @@ bool spmv_test_harness (
     using ch_packed_idx_t = std::vector<PACKED_IDX_T>;
     using ch_packed_val_t = std::vector<PACKED_VAL_T>;
     using ch_mat_pkt_t = aligned_vector<SPMV_MAT_PKT_T>;
-    std::vector<ch_partition_indptr_t> channel_partition_indptr(NUM_HBM_CHANNELS);
-    std::vector<ch_packed_idx_t> channel_indices(NUM_HBM_CHANNELS);
-    std::vector<ch_packed_val_t> channel_vals(NUM_HBM_CHANNELS);
-    std::vector<ch_mat_pkt_t> channel_packets(NUM_HBM_CHANNELS);
-    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+    std::vector<ch_partition_indptr_t> channel_partition_indptr(num_virtual_hbm_channels);
+    for (size_t c = 0; c < num_virtual_hbm_channels; c++) {
         channel_partition_indptr[c].resize(num_partitions);
         channel_partition_indptr[c][0].start = 0;
     }
-    // Iterate the channels
-    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+    std::vector<ch_packed_idx_t> channel_indices(num_virtual_hbm_channels);
+    std::vector<ch_packed_val_t> channel_vals(num_virtual_hbm_channels);
+    std::vector<ch_mat_pkt_t> channel_packets(NUM_HBM_CHANNELS);
+    // Iterate virtual channels and map virtual channels (vc) to physical channels (pc)
+    for (size_t pc = 0; pc < NUM_HBM_CHANNELS; pc++) {
         for (size_t j = 0; j < num_row_partitions; j++) {
             for (size_t i = 0; i < num_col_partitions; i++) {
-                auto indices_partition = cpsr_matrix.get_packed_indices(j, i, c);
-                channel_indices[c].insert(channel_indices[c].end(),
-                    indices_partition.begin(), indices_partition.end());
-                auto vals_partition = cpsr_matrix.get_packed_data(j, i, c);
-                channel_vals[c].insert(channel_vals[c].end(),
-                    vals_partition.begin(), vals_partition.end());
-                assert(indices_partition.size() == vals_partition.size());
-                auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, c);
-                if (!((j == (num_row_partitions - 1)) && (i == (num_col_partitions - 1)))) {
-                    channel_partition_indptr[c][j*num_col_partitions + i + 1].start =
-                        channel_partition_indptr[c][j*num_col_partitions + i].start
-                        + indices_partition.size();
+                size_t num_packets_each_virtual_channel[INTERLEAVE_FACTOR];
+                for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
+                    size_t vc = pc + f * NUM_HBM_CHANNELS;
+                    auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, vc);
+                    uint32_t num_packets = *std::max_element(indptr_partition.back().data,
+                                                             indptr_partition.back().data + PACK_SIZE);
+                    num_packets_each_virtual_channel[f] = num_packets;
                 }
-                channel_partition_indptr[c][j*num_col_partitions + i].nnz = indptr_partition.back();
-
+                uint32_t max_num_packets = *std::max_element(num_packets_each_virtual_channel,
+                                                             num_packets_each_virtual_channel + INTERLEAVE_FACTOR);
+                for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
+                    size_t vc = pc + f * NUM_HBM_CHANNELS;
+                    auto indices_partition = cpsr_matrix.get_packed_indices(j, i, vc);
+                    channel_indices[vc].insert(channel_indices[vc].end(), indices_partition.begin(), indices_partition.end());
+                    auto vals_partition = cpsr_matrix.get_packed_data(j, i, vc);
+                    channel_vals[vc].insert(channel_vals[vc].end(), vals_partition.begin(), vals_partition.end());
+                    channel_indices[vc].resize(channel_partition_indptr[vc][j*num_col_partitions + i].start
+                                               + max_num_packets);
+                    channel_vals[vc].resize(channel_partition_indptr[vc][j*num_col_partitions + i].start
+                                            + max_num_packets);
+                    assert(channel_indices[vc].size() == channel_vals[vc].size());
+                    auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, vc);
+                    channel_partition_indptr[vc][j*num_col_partitions + i].nnz = indptr_partition.back();
+                    if (!((j == (num_row_partitions - 1)) && (i == (num_col_partitions - 1)))) {
+                        channel_partition_indptr[vc][j*num_col_partitions + i + 1].start =
+                            channel_partition_indptr[vc][j*num_col_partitions + i].start + max_num_packets;
+                    }
+                }
             }
         }
-        assert(channel_indices[c].size() == channel_vals[c].size());
-        channel_packets[c].resize(2*num_partitions + channel_indices[c].size());
+
+        channel_packets[pc].resize(num_partitions*(1+INTERLEAVE_FACTOR) + channel_indices[pc].size()*INTERLEAVE_FACTOR);
         // partition indptr
-        for (size_t i = 0; i < num_partitions; i++) {
-            channel_packets[c][2*i].indices.data[0] = channel_partition_indptr[c][i].start;
-            channel_packets[c][2*i + 1].indices = channel_partition_indptr[c][i].nnz;
+        for (size_t ij = 0; ij < num_partitions; ij++) {
+            channel_packets[pc][ij*(1+INTERLEAVE_FACTOR)].indices.data[0] =
+                channel_partition_indptr[pc][ij].start * INTERLEAVE_FACTOR;
+            for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
+                size_t vc = pc + f * NUM_HBM_CHANNELS;
+                channel_packets[pc][ij*(1+INTERLEAVE_FACTOR) + 1 + f].indices = channel_partition_indptr[vc][ij].nnz;
+            }
         }
         // matrix indices and vals
-        for (size_t i = 0; i < channel_indices[c].size(); i++) {
-            channel_packets[c][2*num_partitions + i].indices = channel_indices[c][i];
-            channel_packets[c][2*num_partitions + i].vals = channel_vals[c][i];
+        uint32_t offset = num_partitions*(1+INTERLEAVE_FACTOR);
+        for (size_t i = 0; i < channel_indices[pc].size(); i++) {
+            for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
+                size_t vc = pc + f * NUM_HBM_CHANNELS;
+                size_t ii = i*INTERLEAVE_FACTOR + f;
+                channel_packets[pc][offset + ii].indices = channel_indices[vc][i];
+                channel_packets[pc][offset + ii].vals = channel_vals[vc][i];
+            }
         }
     }
     std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;

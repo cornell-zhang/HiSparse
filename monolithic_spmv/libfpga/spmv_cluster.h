@@ -7,8 +7,7 @@
 #include "common.h"
 #include "shuffle.h"
 #include "vecbuf_access_unit.h"
-// #include "pe-pob.h"
-#include "pe-stall.h"
+#include "pe.h"
 
 #include <hls_stream.h>
 #include <ap_fixed.h>
@@ -39,46 +38,29 @@ void CPSR_matrix_loader(
     unsigned num_partitions,                               // in
     hls::stream<EDGE_PLD_T> ML_to_SF_1_stream[PACK_SIZE]   // out
 ) {
-    IDX_T matrix_pkt_offset = (INTERLEAVE_FACTOR + 1)*num_partitions;
+    IDX_T matrix_pkt_offset = num_partitions * 2;
     for (unsigned col_partition_idx = 0; col_partition_idx < num_col_partitions; col_partition_idx++) {
         #pragma HLS pipeline off
 
         // read CPSR matadata: partition start and lengths of each stream
-        unsigned partition_id = row_partition_idx * num_col_partitions + col_partition_idx;
-        IDX_T partition_start;
-        IDX_T stream_length[INTERLEAVE_FACTOR][PACK_SIZE];
-        #pragma HLS ARRAY_PARTITION variable=stream_length complete dim=0
-        for (int ii = 0; ii < INTERLEAVE_FACTOR + 1; ii++) {
-            #pragma HLS PIPELINE
-            IDX_T partition_info_idx = (INTERLEAVE_FACTOR+1)*partition_id + ii;
-            SPMV_MAT_PKT_T mat_pkt = matrix_hbm[partition_info_idx];
-            if (ii == 0) {
-                partition_start = mat_pkt.indices.data[0];
-            } else {
-                for (int k = 0; k < PACK_SIZE; k++) {
-                    #pragma HLS UNROLL
-                    stream_length[ii - 1][k] = mat_pkt.indices.data[k];
-                }
-            }
+        unsigned part_id = row_partition_idx * num_col_partitions + col_partition_idx;
+        IDX_T partition_info_idx = 2 * part_id;
+        IDX_T partition_start = matrix_hbm[partition_info_idx].indices.data[0];
+        PACKED_IDX_T part_len_pkt = matrix_hbm[partition_info_idx + 1].indices;
+        IDX_T stream_length[PACK_SIZE];
+        #pragma HLS array_partition variable=stream_length complete
+        for (unsigned k = 0; k < PACK_SIZE; k++) {
+            #pragma HLS unroll
+            stream_length[k] = part_len_pkt.data[k];
         }
 
-        // calculate the number of packets in each packed stream from a virtual channel
-        unsigned num_packets[INTERLEAVE_FACTOR];
-        for (int ii = 0; ii < INTERLEAVE_FACTOR; ii++) {
+        // prepare to read
+        unsigned num_reads = array_max<IDX_T, PACK_SIZE>(stream_length);
+        IDX_T row_idx[PACK_SIZE];
+        #pragma HLS ARRAY_PARTITION variable=row_idx complete
+        for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS UNROLL
-            num_packets[ii] = array_max<IDX_T, PACK_SIZE>(stream_length[ii]);
-        }
-        unsigned max_num_packets = array_max<IDX_T, INTERLEAVE_FACTOR>(num_packets);
-
-        // initialize row id
-        IDX_T row_idx[INTERLEAVE_FACTOR][PACK_SIZE];
-        #pragma HLS ARRAY_PARTITION variable=row_idx complete dim=0
-        for (int ii = 0; ii < INTERLEAVE_FACTOR; ii++) {
-            #pragma HLS UNROLL
-            for (int k = 0; k < PACK_SIZE; k++) {
-                #pragma HLS UNROLL
-                row_idx[ii][k] = ii * PACK_SIZE + k;
-            }
+            row_idx[k] = k;
         }
 
         // attach start-of-data
@@ -89,20 +71,20 @@ void CPSR_matrix_loader(
 
         // TODO: maunally control the burst length will help?
         loop_matrix_loader:
-        for (unsigned i = 0; i < max_num_packets * INTERLEAVE_FACTOR; i++) {
+        for (unsigned i = 0; i < num_reads; i++) {
             #pragma HLS PIPELINE II=1
             SPMV_MAT_PKT_T mat_pkt = matrix_hbm[i + partition_start + matrix_pkt_offset];
             for (unsigned k = 0; k < PACK_SIZE; k++) {
                 #pragma HLS UNROLL
-                unsigned stream_idx = i % INTERLEAVE_FACTOR;
-                if (i / INTERLEAVE_FACTOR < stream_length[stream_idx][k]) {
+                if (i < stream_length[k]) {
                     if (mat_pkt.indices.data[k] == IDX_MARKER) {
-                        row_idx[stream_idx][k] += (PACK_SIZE * val2bit(mat_pkt.vals.data[k]) * INTERLEAVE_FACTOR);
+                        // Be careful: mat_pkt.vals.data[k] can not be larger than power(2, 8)
+                        row_idx[k] += (PACK_SIZE * mat_pkt.vals.data[k](31, 32-IBITS));
                     } else {
                         EDGE_PLD_T input_to_SF_1;
                         input_to_SF_1.mat_val = mat_pkt.vals.data[k];
                         input_to_SF_1.col_idx = mat_pkt.indices.data[k];
-                        input_to_SF_1.row_idx = row_idx[stream_idx][k];
+                        input_to_SF_1.row_idx = row_idx[k];
                         ML_to_SF_1_stream[k].write(input_to_SF_1);
                     }
                 }
@@ -135,7 +117,7 @@ void spmv_vector_unpacker (
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS unroll
             VEC_PLD_T p;
-            p.val = bit2val(VEC_AXIS_VAL(pkt, k));
+            VAL_T_BITCAST(p.val) = VEC_AXIS_VAL(pkt, k);
             p.idx = VEC_AXIS_PKT_IDX(pkt) * PACK_SIZE + k;
             p.inst = pkt.user;
             vec_out[k].write(p);
@@ -163,7 +145,7 @@ void spmv_result_packer (
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS unroll
             VEC_PLD_T p = res_in[k].read();
-            VEC_AXIS_VAL(pkt, k) = val2bit(p.val);
+            VEC_AXIS_VAL(pkt, k) = VAL_T_BITCAST(p.val);
             switch (p.inst) {
                 case SOD:
                     got_SOD[k] = 1;

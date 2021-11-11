@@ -26,23 +26,67 @@ const int DDR[2] = {CHANNEL_NAME(32), CHANNEL_NAME(33)};
 template<typename T>
 using aligned_vector = std::vector<T, aligned_allocator<T> >;
 
+//--------------------------------------------------------------------------------------------------
+// reference and verify utils
+//--------------------------------------------------------------------------------------------------
+
+void compute_ref(
+    spmv::io::CSRMatrix<float> &mat,
+    std::vector<float> &vector,
+    std::vector<float> &ref_result
+) {
+    ref_result.resize(mat.num_rows);
+    std::fill(ref_result.begin(), ref_result.end(), 0);
+    for (size_t row_idx = 0; row_idx < mat.num_rows; row_idx++) {
+        IDX_T start = mat.adj_indptr[row_idx];
+        IDX_T end = mat.adj_indptr[row_idx + 1];
+        for (size_t i = start; i < end; i++) {
+            IDX_T idx = mat.adj_indices[i];
+            ref_result[row_idx] += mat.adj_data[i] * vector[idx];
+        }
+    }
+}
+
+bool verify(std::vector<float> reference_results,
+            std::vector<VAL_T> kernel_results) {
+    float epsilon = 0.0001;
+    if (reference_results.size() != kernel_results.size()) {
+        std::cout << "Error: Size mismatch"
+                      << std::endl;
+        std::cout   << "  Reference result size: " << reference_results.size()
+                    << "  Kernel result size: " << kernel_results.size()
+                    << std::endl;
+        return false;
+    }
+    for (size_t i = 0; i < reference_results.size(); i++) {
+        bool match = abs(float(kernel_results[i]) - reference_results[i]) < epsilon;
+        if (!match) {
+            std::cout << "Error: Result mismatch"
+                      << std::endl;
+            std::cout << "  i = " << i
+                      << "  Reference result = " << reference_results[i]
+                      << "  Kernel result = " << kernel_results[i]
+                      << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
+void unpack_vector(
+    aligned_vector<PACKED_VAL_T> &pdv,
+    std::vector<VAL_T> &dv
+) {
+    dv.resize(pdv.size() * PACK_SIZE);
+    for (size_t i = 0; i < pdv.size(); i++) {
+        for (size_t k = 0; k < PACK_SIZE; k++) {
+            dv[i * PACK_SIZE + k] = pdv[i].data[k];
+        }
+    }
+}
 
 //---------------------------------------------------------------
-// datasets to be tested
-//---------------------------------------------------------------
-const unsigned NUM_RUNS = 1000 * 300;
-// std::string DATASET_PATH = "/work/shared/common/project_build/graphblas/data/sparse_matrix_graph/";
-// std::vector<std::string> DATASETS = {
-//     "gplus_108K_13M_csr_float32.npz",
-//     "ogbl_ppa_576K_42M_csr_float32.npz",
-//     "hollywood_1M_113M_csr_float32.npz",
-//     "pokec_1633K_31M_csr_float32.npz",
-//     "ogbn_products_2M_124M_csr_float32.npz",
-//     "orkut_3M_213M_csr_float32.npz",
-// };
-
-//---------------------------------------------------------------
-// benchmark utils
+// test harness utils
 //---------------------------------------------------------------
 
 #define CL_CREATE_EXT_PTR(name, data, channel)                  \
@@ -76,64 +120,37 @@ size, &ext, &err);
 struct cl_runtime {
     cl::Context context;
     cl::CommandQueue command_queue;
-    cl::Kernel spmv_sk0;
-    cl::Kernel spmv_sk1;
-    cl::Kernel spmv_sk2;
-    cl::Kernel vector_loader;
-    cl::Kernel result_drain;
+    cl::Kernel spmv;
 };
 
-struct benckmark_result {
-    double preprocess_time_s;
-    double spmv_time_ms;
-    double throughput_GBPS;
-    double throughput_GOPS;
-};
-
-std::ostream& operator<<(std::ostream& os, const benckmark_result &p) {
-    os << '{'
-        << "Preprocessing: " << p.preprocess_time_s << " s | "
-        << "SpMV: " << p.spmv_time_ms << " ms | "
-        << p.throughput_GBPS << " GBPS | "
-        << p.throughput_GOPS << " GOPS }";
-    return os;
-}
-
 //---------------------------------------------------------------
-// benchmark function
+// test harness
 //---------------------------------------------------------------
 
-benckmark_result spmv_benchmark (
-    unsigned vb_bank_size,
-    unsigned ob_bank_size,
+bool spmv_test_harness (
     cl_runtime &runtime,
     spmv::io::CSRMatrix<float> &ext_matrix,
     bool skip_empty_rows
 ) {
     using namespace spmv::io;
-    using namespace std::chrono;
-
-    benckmark_result bmark_res;
 
     //--------------------------------------------------------------------
     // load and format the matrix
     //--------------------------------------------------------------------
     std::cout << "INFO : Test started" << std::endl;
-    auto t0 = high_resolution_clock::now();
     util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
-    size_t logical_ob_size = ob_bank_size * PACK_SIZE * NUM_HBM_CHANNELS;
-    size_t logical_vb_size = vb_bank_size * PACK_SIZE;
-    size_t num_row_partitions = (mat.num_rows + logical_ob_size - 1) / logical_ob_size;
-    size_t num_col_partitions = (mat.num_cols + logical_vb_size - 1) / logical_vb_size;
+
+    size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
+    size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
     size_t num_partitions = num_row_partitions * num_col_partitions;
     size_t num_virtual_hbm_channels = NUM_HBM_CHANNELS * INTERLEAVE_FACTOR;
     CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE> cpsr_matrix
         = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
             mat,
             IDX_MARKER,
-            logical_ob_size,
-            logical_vb_size,
+            LOGICAL_OB_SIZE,
+            LOGICAL_VB_SIZE,
             num_virtual_hbm_channels,
             skip_empty_rows
         );
@@ -206,11 +223,7 @@ benckmark_result spmv_benchmark (
             }
         }
     }
-    auto t1 = high_resolution_clock::now();
-    bmark_res.preprocess_time_s = double(duration_cast<microseconds>(t1 - t0).count()) / 1000000;
     std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
-    std::cout << "  row_partitions: " << num_row_partitions << std::endl;
-    std::cout << "  col_partitions: " << num_col_partitions << std::endl;
 
     //--------------------------------------------------------------------
     // generate input vector
@@ -248,19 +261,14 @@ benckmark_result spmv_benchmark (
         channel_packets_ext[c].param = 0;
         channel_packets_ext[c].flags = HBM[c];
         size_t channel_packets_size = sizeof(SPMV_MAT_PKT_T) * channel_packets[c].size();
-        if (channel_packets_size >= 256 * 1024 * 1024) {
-            std::cout << "ERROR : Trying to allocate " << channel_packets_size/1024/1024
-            << " MB on HBM channel " << c
+        if (channel_packets_size >= 256 * 1000 * 1000) {
+            std::cout << "Error: Trying to allocate " << channel_packets_size/1000/1000
+            << " MB on HBM channel " << c << std::endl
             << ", but the capcity of one HBM channel is 256 MB." << std::endl;
             exit(EXIT_FAILURE);
         }
         channel_packets_buf[c]
             = CL_BUFFER_RDONLY(runtime.context, channel_packets_size, channel_packets_ext[c], err);
-        if (err != CL_SUCCESS) {
-            std::cout << "ERROR : exception catched when trying to create CL buffer of "
-                      << channel_packets_size/1024/1024 << " MB on HBM "
-                      << c << std::endl;
-        }
         CHECK_ERR(err);
     }
 
@@ -286,91 +294,157 @@ benckmark_result spmv_benchmark (
     std::cout << "INFO : Host -> Device data transfer complete!" << std::endl;
 
     //--------------------------------------------------------------------
-    // invoke kernel: warm-up run and verify results
+    // invoke kernel
     //--------------------------------------------------------------------
     // set kernel arguments that won't change across row iterations
     std::cout << "INFO : Invoking kernel:" << std::endl;
+    std::cout << "  row_partitions: " << num_row_partitions << std::endl;
+    std::cout << "  col_partitions: " << num_col_partitions << std::endl;
 
-    for (size_t c = 0; c < SK0_CLUSTER; c++) {
-        OCL_CHECK(err, err = runtime.spmv_sk0.setArg(c, channel_packets_buf[c]));
+    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+        OCL_CHECK(err, err = runtime.spmv.setArg(c, channel_packets_buf[c]));
     }
-    for (size_t c = 0; c < SK1_CLUSTER; c++) {
-        OCL_CHECK(err, err = runtime.spmv_sk1.setArg(c, channel_packets_buf[c + SK0_CLUSTER]));
-    }
-    for (size_t c = 0; c < SK2_CLUSTER; c++) {
-        OCL_CHECK(err, err = runtime.spmv_sk2.setArg(c, channel_packets_buf[c + SK0_CLUSTER + SK1_CLUSTER]));
-    }
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
-    OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
-    OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
-    // std::cout << "  non-changing arguments set." << std::endl;
 
-    size_t rows_per_ch_in_last_row_part;
-    if (mat.num_rows % logical_ob_size == 0) {
-        rows_per_ch_in_last_row_part = logical_ob_size / NUM_HBM_CHANNELS;
-    } else {
-        rows_per_ch_in_last_row_part = mat.num_rows % logical_ob_size / NUM_HBM_CHANNELS;
-    }
+    OCL_CHECK(err, err = runtime.spmv.setArg(NUM_HBM_CHANNELS + 0, vector_buf));
+    OCL_CHECK(err, err = runtime.spmv.setArg(NUM_HBM_CHANNELS + 1, result_buf));
+    OCL_CHECK(err, err = runtime.spmv.setArg(NUM_HBM_CHANNELS + 2, (unsigned)mat.num_rows));
+    OCL_CHECK(err, err = runtime.spmv.setArg(NUM_HBM_CHANNELS + 3, (unsigned)mat.num_cols));
+
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv));
+    runtime.command_queue.finish();
+
+    std::cout << "INFO : SpMV kernel complete!" << std::endl;
 
     //--------------------------------------------------------------------
-    // benchmarking
+    // compute reference
     //--------------------------------------------------------------------
-    double total_time = 0;
-    unsigned Nnz = mat.adj_data.size();
-    double Mops = 2 * Nnz / 1000 / 1000;
-    double gbs = double(Nnz * 2 * 4) / 1024.0 / 1024.0 / 1024.0;
-    for (unsigned i = 0; i < NUM_RUNS; i++) {
-        // std::cout << "  Running Run " << i << std::endl;
-        auto t0 = high_resolution_clock::now();
-        for (size_t row_part_id = 0; row_part_id < num_row_partitions; row_part_id++) {
-            unsigned part_len = logical_ob_size / NUM_HBM_CHANNELS;
-            if (row_part_id == num_row_partitions - 1) {
-                part_len = rows_per_ch_in_last_row_part;
-            }
-            OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 2, (unsigned)row_part_id));
-            OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 3, (unsigned)part_len));
-            OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 2, (unsigned)row_part_id));
-            OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 3, (unsigned)part_len));
-            OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 2, (unsigned)row_part_id));
-            OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 3, (unsigned)part_len));
-            OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
-            // std::cout << "    run-specific arguments set." << std::endl;
-            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
-            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
-            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
-            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
-            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
-            // std::cout << "    all kernel enqueued." << std::endl;
-            runtime.command_queue.finish();
-            // std::cout << "    all kernel finished." << std::endl;
+    std::vector<float> ref_result;
+    compute_ref(ext_matrix, vector_f, ref_result);
+    std::cout << "INFO : Compute reference complete!" << std::endl;
+
+    //--------------------------------------------------------------------
+    // verify
+    //--------------------------------------------------------------------
+    runtime.command_queue.enqueueMigrateMemObjects({result_buf}, CL_MIGRATE_MEM_OBJECT_HOST);
+    runtime.command_queue.finish();
+    std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+
+    std::vector<VAL_T> upk_result;
+    unpack_vector(result, upk_result);
+    return verify(ref_result, upk_result);
+}
+
+//---------------------------------------------------------------
+// test case utils
+//---------------------------------------------------------------
+
+spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
+    unsigned num_rows,
+    unsigned num_cols,
+    unsigned nnz_per_row
+) {
+    spmv::io::CSRMatrix<float> mat_f;
+    mat_f.num_rows = num_rows;
+    mat_f.num_cols = num_cols;
+    mat_f.adj_data.resize(num_rows * nnz_per_row);
+    mat_f.adj_indices.resize(num_rows * nnz_per_row);
+    mat_f.adj_indptr.resize(num_rows + 1);
+
+    for (auto &x : mat_f.adj_data) {x = 1;}
+
+    unsigned indice_step = num_cols / nnz_per_row;
+    for (size_t i = 0; i < num_rows; i++) {
+        for (size_t j = 0; j < nnz_per_row; j++) {
+            mat_f.adj_indices[i*nnz_per_row + j] = (indice_step*j + i) % num_cols;
         }
-        auto t1 = high_resolution_clock::now();
-        total_time += double(duration_cast<microseconds>(t1 - t0).count()) / 1000;
-
     }
-    bmark_res.spmv_time_ms = total_time / NUM_RUNS;
-    bmark_res.throughput_GBPS = gbs / (bmark_res.spmv_time_ms / 1000);
-    bmark_res.throughput_GOPS = Mops / bmark_res.spmv_time_ms;
+    for (size_t i = 0; i < num_rows + 1; i++) {
+        mat_f.adj_indptr[i] = nnz_per_row*i;
+    }
+    return mat_f;
+}
 
-    //--------------------------------------------------------------------
-    // release host & device memory
-    //--------------------------------------------------------------------
-    // for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
-    //     err = clReleaseMemObject(channel_packets_buf[c]());
-    //     CHECK_ERR(err);
-    // }
-    // err = clReleaseMemObject(vector_buf());
-    // CHECK_ERR(err);
-    // err = clReleaseMemObject(result_buf());
-    // CHECK_ERR(err);
+//---------------------------------------------------------------
+// test cases
+//---------------------------------------------------------------
+bool test_basic(cl_runtime &runtime) {
+    std::cout << "------ Running test: on basic dense matrix " << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/dense_128_csr_float32.npz"
+        );
+    for (auto &x : mat_f.adj_data) {x = 1;}
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
 
-    return bmark_res;
+bool test_basic_sparse(cl_runtime &runtime) {
+    std::cout << "------ Running test: on basic sparse matrix " << std::endl;
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_medium_sparse(cl_runtime &runtime) {
+    std::cout << "------ Running test: on uniform 10K 10 (100K, 1M) " << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/uniform_10K_10_csr_float32.npz"
+        );
+    for (auto &x : mat_f.adj_data) {x = 1;}
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_gplus(cl_runtime &runtime) {
+    std::cout << "------ Running test: on google_plus (108K, 13M) " << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
+        );
+    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_ogbl_ppa(cl_runtime &runtime) {
+    std::cout << "------ Running test: on ogbl_ppa (576K, 42M) " << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
+        );
+    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
 }
 
 //---------------------------------------------------------------
@@ -379,19 +453,20 @@ benckmark_result spmv_benchmark (
 
 int main (int argc, char** argv) {
     // parse command-line arguments
-    if (argc != 5) {
+    if (argc != 3) {
         std::cout << "Usage: " << argv[0]
-                  << " <hw-xclbin> <dataset> <v> <o>" << std::endl;
+                  << " <sw_emu/hw_emu/hw> <xclbin>" << std::endl;
         return 0;
     }
-    std::string target = "hw";
-    std::string xclbin = argv[1];
-    unsigned vb_bank_size = atoi(argv[3]) * 1024;
-    unsigned ob_bank_size = atoi(argv[4]) * 1024;
+    std::string target = argv[1];
+    std::string xclbin = argv[2];
 
     // setup Xilinx openCL runtime
     cl_runtime runtime;
     cl_int err;
+    if (target == "sw_emu" || target == "hw_emu") {
+        setenv("XCL_EMULATION_MODE", target.c_str(), true);
+    }
     cl::Device device;
     bool found_device = false;
     auto devices = xcl::get_xil_devices();
@@ -416,11 +491,7 @@ int main (int argc, char** argv) {
     } else {
         std::cout << "INFO : Successfully programmed device with xclbin file" << std::endl;
     }
-    OCL_CHECK(err, runtime.spmv_sk0 = cl::Kernel(program, "spmv_sk0", &err));
-    OCL_CHECK(err, runtime.spmv_sk1 = cl::Kernel(program, "spmv_sk1", &err));
-    OCL_CHECK(err, runtime.spmv_sk2 = cl::Kernel(program, "spmv_sk2", &err));
-    OCL_CHECK(err, runtime.vector_loader = cl::Kernel(program, "spmv_vector_loader", &err));
-    OCL_CHECK(err, runtime.result_drain = cl::Kernel(program, "spmv_result_drain", &err));
+    OCL_CHECK(err, runtime.spmv = cl::Kernel(program, "spmv", &err));
 
     OCL_CHECK(err, runtime.command_queue = cl::CommandQueue(
         runtime.context,
@@ -429,13 +500,13 @@ int main (int argc, char** argv) {
         &err));
 
     // run tests
-    std::string dataset = argv[2];
+    bool passed = true;
+    passed = passed && test_basic(runtime);
+    passed = passed && test_basic_sparse(runtime);
+    passed = passed && test_medium_sparse(runtime);
+    passed = passed && test_gplus(runtime);
+    passed = passed && test_ogbl_ppa(runtime);
 
-    std::cout << "------ Running benchmark on " << dataset << std::endl;
-    spmv::io::CSRMatrix<float> mat_f = spmv::io::load_csr_matrix_from_float_npz(dataset);
-    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    std::cout << spmv_benchmark(vb_bank_size, ob_bank_size, runtime, mat_f, true) << std::endl;
-
-    std::cout << "===== Benchmark Finished =====" << std::endl;
-    return 0;
+    std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
+    return passed ? 0 : 1;
 }

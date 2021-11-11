@@ -31,10 +31,10 @@ struct IN_FLIGHT_WRITE {
     VAL_T value;
 };
 
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned pack_size>
 void ufixed_pe_process(
     hls::stream<UPDATE_PLD_T> &input,
-    VAL_T output_buffer[bank_size]
+    VAL_T *output_buffer
 ) {
     bool exit = false;
 
@@ -53,7 +53,6 @@ void ufixed_pe_process(
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
         #pragma HLS dependence variable=ifwq intra true
-        // TODO: use non-blocking read to ensure IFWQ is shifted every cycle?
         UPDATE_PLD_T pld = input.read();
         bool valid = true;
 #ifdef PE_LINE_TRACING
@@ -97,10 +96,10 @@ void ufixed_pe_process(
 //----------------------------------------------------------------
 // pe output pipeline
 //----------------------------------------------------------------
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned pack_size>
 void ufixed_pe_output(
     hls::stream<VEC_PLD_T> &output,
-    VAL_T output_buffer[bank_size],
+    VAL_T *output_buffer,
     const unsigned used_buf_len
 ) {
     bool exit = false;
@@ -123,11 +122,12 @@ void ufixed_pe_output(
 //----------------------------------------------------------------
 // unsigned fixed-point pe
 //----------------------------------------------------------------
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned pack_size>
 void pe(
     hls::stream<UPDATE_PLD_T> &input,
     hls::stream<VEC_PLD_T> &output,
-    const unsigned used_buf_len
+    const unsigned used_buf_len,
+    const unsigned bank_size
 ) {
     VAL_T output_buffer[bank_size];
     #pragma HLS bind_storage variable=output_buffer type=RAM_2P impl=URAM latency=3
@@ -154,7 +154,7 @@ void pe(
     while (!exit) {
         #pragma HLS pipeline off
         // this function will exit upon EOD
-        ufixed_pe_process<id, bank_size, pack_size>(input, output_buffer);
+        ufixed_pe_process<id, pack_size>(input, output_buffer);
 
         // read the next payload and decide whether continue processing or exit
         bool got_valid_pld = false;
@@ -177,7 +177,7 @@ void pe(
 
     // dump results
     output.write(VEC_PLD_SOD);
-    ufixed_pe_output<id, bank_size, pack_size>(output, output_buffer, used_buf_len);
+    ufixed_pe_output<id, pack_size>(output, output_buffer, used_buf_len);
     output.write(VEC_PLD_EOD);
     output.write(VEC_PLD_EOS);
 }
