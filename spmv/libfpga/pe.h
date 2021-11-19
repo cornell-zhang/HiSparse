@@ -11,6 +11,43 @@
 #endif
 
 //----------------------------------------------------------------
+// pe operators for different simirings
+//----------------------------------------------------------------
+VAL_T pe_binary_operator(VAL_T a, VAL_T b, SEMIRING_T sr) {
+    #pragma HLS pipeline II=1
+    switch (sr) {
+        case ARITHMETIC_SEMIRING:
+            return a * b;
+        case BOOLEAN_SEMIRING:
+            return a && b;
+        case TROPICAL_SEMIRING:
+            return a + b;
+        default: // use arithmeic semiring as the default
+            return a * b;
+    }
+}
+
+VAL_T min(VAL_T a, VAL_T b) {
+    #pragma HLS inline
+    return (a < b) ? a : b;
+}
+
+VAL_T pe_reduction_operator(VAL_T a, VAL_T b, SEMIRING_T sr) {
+    #pragma HLS pipeline II=1
+    #pragma HLS latency min=0 max=0
+    switch (sr) {
+        case ARITHMETIC_SEMIRING:
+            return a + b;
+        case BOOLEAN_SEMIRING:
+            return a || b;
+        case TROPICAL_SEMIRING:
+            return min(a, b);
+        default: // use arithmeic semiring as the default
+            return a + b;
+    }
+}
+
+//----------------------------------------------------------------
 // pe processing pipeline
 //----------------------------------------------------------------
 struct IN_FLIGHT_WRITE {
@@ -22,6 +59,7 @@ struct IN_FLIGHT_WRITE {
 template<int id, unsigned bank_size, unsigned pack_size>
 void ufixed_pe_process(
     hls::stream<UPDATE_PLD_T> &input,
+    SEMIRING_T semiring,
     VAL_T output_buffer[bank_size]
 ) {
     bool exit = false;
@@ -77,6 +115,17 @@ void ufixed_pe_process(
         ifwq_new_entry.valid = valid;
 
         if (valid) {
+            IDX_T bank_addr = pld.row_idx / pack_size;
+            VAL_T incr = pe_binary_operator(pld.mat_val, pld.vec_val, semiring);
+            VAL_T q = output_buffer[bank_addr];
+            VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
+                          ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
+                          ((bank_addr == ifwq[2].addr) && ifwq[2].valid) ? ifwq[2].value :
+                          ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
+                          ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
+                          q;
+            VAL_T new_q = pe_reduction_operator(q_fwd, incr, semiring);
+            VAL_T new_q_reg = reg(new_q); // force a register after addition
             output_buffer[bank_addr] = new_q_reg;
         }
 
@@ -122,7 +171,9 @@ template<int id, unsigned bank_size, unsigned pack_size>
 void pe(
     hls::stream<UPDATE_PLD_T> &input,
     hls::stream<VEC_PLD_T> &output,
-    const unsigned used_buf_len
+    const unsigned used_buf_len,
+    SEMIRING_T semiring,
+    VAL_T zero
 ) {
     VAL_T output_buffer[bank_size];
     #pragma HLS bind_storage variable=output_buffer type=RAM_2P impl=URAM latency=3
@@ -131,7 +182,7 @@ void pe(
     loop_reset_ob:
     for (unsigned i = 0; i < used_buf_len; i++) {
         #pragma HLS pipeline II=1
-        output_buffer[i] = 0;
+        output_buffer[i] = zero;
     }
 
     // wait on the first SOD
@@ -149,7 +200,7 @@ void pe(
     while (!exit) {
         #pragma HLS pipeline off
         // this function will exit upon EOD
-        ufixed_pe_process<id, bank_size, pack_size>(input, output_buffer);
+        ufixed_pe_process<id, bank_size, pack_size>(input, semiring, output_buffer);
 
         // read the next payload and decide whether continue processing or exit
         bool got_valid_pld = false;

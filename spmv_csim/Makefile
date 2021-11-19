@@ -50,7 +50,7 @@ copy_files:
 
 csim: csim.cpp copy_files
 	$(CXX) $(CXXFLAGS) $< -o csim $(LDFLAGS)
-	 ./csim
+	./csim
 
 .PHONY: clean cleanall
 clean:

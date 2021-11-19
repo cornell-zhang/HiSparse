@@ -20,7 +20,9 @@ void spmv_sk0(
     const unsigned row_partition_idx,         // in
     const unsigned rows_per_c_in_partition,   // in
     const unsigned num_col_partitions,        // in
-    const unsigned num_partitions             // in
+    const unsigned num_partitions,            // in
+    SEMIRING_T semiring,                      // in
+    VAL_T zero                                // in
 ) {
     #pragma HLS interface m_axi port=matrix_hbm_0 offset=slave bundle=spmv_mat0
     #pragma HLS interface m_axi port=matrix_hbm_1 offset=slave bundle=spmv_mat1
@@ -35,6 +37,8 @@ void spmv_sk0(
     #pragma HLS interface s_axilite port=rows_per_c_in_partition bundle=control
     #pragma HLS interface s_axilite port=num_col_partitions bundle=control
     #pragma HLS interface s_axilite port=num_partitions bundle=control
+    #pragma HLS interface s_axilite port=semiring bundle=control
+    #pragma HLS interface s_axilite port=zero bundle=control
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=vec_in
@@ -62,7 +66,9 @@ void spmv_sk0(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -76,7 +82,9 @@ void spmv_sk0(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -90,7 +98,9 @@ void spmv_sk0(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -104,7 +114,9 @@ void spmv_sk0(
         row_partition_idx,
         rows_per_c_in_partition,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
