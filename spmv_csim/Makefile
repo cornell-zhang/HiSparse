@@ -1,5 +1,5 @@
 PROJ_ROOT = ..
-IMPL := float
+IMPL := fixed
 
 CXX := g++
 
@@ -24,6 +24,8 @@ CXXFLAGS += -Wno-misleading-indentation
 CXXFLAGS += -Wno-int-in-bool-context
 CXXFLAGS += -Wno-unused-label
 CXXFLAGS += -Wno-sign-compare
+CXXFLAGS += -Wmaybe-uninitialized
+CXXFLAGS += -Wuninitialized
 ifeq ($(IMPL), float)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
@@ -43,9 +45,9 @@ copy_files:
 	cp $(HW_DIR)/spmv_sk2.cpp csim_headers/spmv_sk2.h
 	cp $(LIBFPGA_DIR)/*.h csim_headers/
 
-csim: csim.cpp # copy_files
+csim: csim.cpp copy_files
 	$(CXX) $(CXXFLAGS) $< -o csim $(LDFLAGS)
-# ./csim
+	./csim
 
 .PHONY: clean cleanall
 clean:

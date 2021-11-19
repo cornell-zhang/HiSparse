@@ -19,7 +19,7 @@
 // C-simulation wrapper
 //---------------------------------------------------------------
 
-unsigned long long top_wrapper (
+void top_wrapper (
     const SPMV_MAT_PKT_T *matrix_hbm_0,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_1,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_2,       // in
@@ -42,11 +42,12 @@ unsigned long long top_wrapper (
     const unsigned part_len,                  // in
     const unsigned num_col_partitions,        // in
     const unsigned num_partitions,            // in
-    const unsigned num_cols                   // in
+    const unsigned num_cols,                  // in
+    SEMIRING_T semiring,                      // in
+    VAL_T zero                                // in
 ) {
     hls::stream<VEC_AXIS_T> vec_VL_to_SK0, vec_VL_to_SK1, vec_VL_to_relay, vec_relay_to_SK2;
     hls::stream<VEC_AXIS_T> res_SK0_to_RD, res_SK1_to_RD, res_SK2_to_relay, res_relay_to_RD;
-    unsigned long long sf1_iter_cnt[3];
 
     // std::cout << "INFO : [top wrapper] SpMV Kernel Started: row partition " << row_part_id
     //           << " with " << part_len << " rows per cluster" << std::endl;
@@ -61,7 +62,7 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Vector Loader Complete" << std::endl;
 
-    sf1_iter_cnt[0] = spmv_sk0 (
+    spmv_sk0 (
         matrix_hbm_0,
         matrix_hbm_1,
         matrix_hbm_2,
@@ -71,12 +72,14 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 0 Complete" << std::endl;
 
-    sf1_iter_cnt[1] = spmv_sk1 (
+    spmv_sk1 (
         matrix_hbm_4,
         matrix_hbm_5,
         matrix_hbm_6,
@@ -88,7 +91,9 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 1 Complete" << std::endl;
@@ -100,7 +105,7 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Relay: VL->SK2 Complete" << std::endl;
 
-    sf1_iter_cnt[2] = spmv_sk2 (
+    spmv_sk2 (
         matrix_hbm_10,
         matrix_hbm_11,
         matrix_hbm_12,
@@ -112,7 +117,9 @@ unsigned long long top_wrapper (
         row_part_id,
         part_len,
         num_col_partitions,
-        num_partitions
+        num_partitions,
+        semiring,
+        zero
     );
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 2 Complete" << std::endl;
@@ -134,28 +141,57 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Result Drain Complete" << std::endl;
     // std::cout << "INFO : [top wrapper] SpMV Kernel Complete" << std::endl;
-    return ull_max<3>(sf1_iter_cnt);
-
 }
 
 //--------------------------------------------------------------------------------------------------
 // reference and verify utils
 //--------------------------------------------------------------------------------------------------
 
-// TODO: only support MULADD now!
+#define FLOAT_INF 999999.999F
+
+float sat_add(float a, float b) {
+    if (a > FLOAT_INF || b > FLOAT_INF) {
+        return FLOAT_INF;
+    }
+    float x = a + b;
+    if (x > FLOAT_INF) {
+        return FLOAT_INF;
+    }
+    return x;
+}
+
+float min(float a, float b) {
+    return (a < b) ? a : b;
+}
+
+float semiring_mac(float y, float a, float b, SEMIRING_T sr) {
+    switch (sr) {
+        case ARITHMETIC_SEMIRING:
+            return y + (a * b);
+        case BOOLEAN_SEMIRING:
+            return y || (a && b);
+        case TROPICAL_SEMIRING:
+            return min(y, sat_add(a, b));
+        default: // use arithmeic semiring as the default
+            return y + (a * b);
+    }
+}
+
 void compute_ref(
     spmv::io::CSRMatrix<float> &mat,
     std::vector<float> &vector,
-    std::vector<float> &ref_result
+    std::vector<float> &ref_result,
+    SEMIRING_T semiring,
+    float zero
 ) {
     ref_result.resize(mat.num_rows);
-    std::fill(ref_result.begin(), ref_result.end(), 0);
+    std::fill(ref_result.begin(), ref_result.end(), zero);
     for (size_t row_idx = 0; row_idx < mat.num_rows; row_idx++) {
         IDX_T start = mat.adj_indptr[row_idx];
         IDX_T end = mat.adj_indptr[row_idx + 1];
         for (size_t i = start; i < end; i++) {
             IDX_T idx = mat.adj_indices[i];
-            ref_result[row_idx] += mat.adj_data[i] * vector[idx];
+            ref_result[row_idx] = semiring_mac(ref_result[row_idx], mat.adj_data[i], vector[idx], semiring);
         }
     }
 }
@@ -172,6 +208,8 @@ bool verify(std::vector<float> reference_results,
         return false;
     }
     for (size_t i = 0; i < reference_results.size(); i++) {
+        bool match_inf = (float(kernel_results[i]) >= 255 && reference_results[i] >= FLOAT_INF);
+        if (match_inf) continue;
         bool match = abs(float(kernel_results[i]) - reference_results[i]) < epsilon;
         if (!match) {
             std::cout << "Error: Result mismatch"
@@ -205,9 +243,33 @@ void unpack_vector(
 
 bool spmv_test_harness (
     spmv::io::CSRMatrix<float> &ext_matrix,
-    bool skip_empty_rows
+    bool skip_empty_rows,
+    SEMIRING_T semiring
 ) {
     using namespace spmv::io;
+    //--------------------------------------------------------------------
+    // setup semiring configurations
+    //--------------------------------------------------------------------
+    VAL_T val_zero;
+    float float_zero;
+    switch (semiring) {
+    case ARITHMETIC_SEMIRING:
+        val_zero = 0;
+        float_zero = 0;
+        break;
+    case BOOLEAN_SEMIRING:
+        val_zero = 0;
+        float_zero = 0;
+        break;
+    case TROPICAL_SEMIRING:
+        VAL_T_BITCAST(val_zero) = 0xFFFFFFFF;
+        float_zero = FLOAT_INF;
+        break;
+    default:
+        val_zero = 0;
+        float_zero = 0;
+        break;
+    }
 
     //--------------------------------------------------------------------
     // load and format the matrix
@@ -318,7 +380,7 @@ bool spmv_test_harness (
     std::vector<PACKED_VAL_T> result(mat.num_rows / PACK_SIZE);
     for (size_t i = 0; i < result.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
-            result[i].data[k] = 0;
+            result[i].data[k] = val_zero;
         }
     }
     std::cout << "INFO : Input/result initialization complete!" << std::endl;
@@ -329,7 +391,6 @@ bool spmv_test_harness (
     std::cout << "INFO : Invoking kernel:" << std::endl;
     std::cout << "  row_partitions: " << num_row_partitions << std::endl;
     std::cout << "  col_partitions: " << num_col_partitions << std::endl;
-    unsigned long long sf1_iter_cnt = 0;
     size_t rows_per_ch_in_last_row_part;
     if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
         rows_per_ch_in_last_row_part = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
@@ -341,7 +402,7 @@ bool spmv_test_harness (
         if (row_part_id == num_row_partitions - 1) {
             part_len = rows_per_ch_in_last_row_part;
         }
-        sf1_iter_cnt += top_wrapper (
+        top_wrapper (
             channel_packets[0].data(),
             channel_packets[1].data(),
             channel_packets[2].data(),
@@ -364,17 +425,18 @@ bool spmv_test_harness (
             part_len,
             num_col_partitions,
             num_partitions,
-            mat.num_cols
+            mat.num_cols,
+            semiring,
+            val_zero
         );
     }
     std::cout << "INFO : SpMV kernel complete!" << std::endl;
-    std::cout << "INFO : Max Shuffle 1 iteration count: " << sf1_iter_cnt << std::endl;
 
     //--------------------------------------------------------------------
     // compute reference
     //--------------------------------------------------------------------
     std::vector<float> ref_result;
-    compute_ref(ext_matrix, vector_f, ref_result);
+    compute_ref(ext_matrix, vector_f, ref_result, semiring, float_zero);
     std::cout << "INFO : Compute reference complete!" << std::endl;
 
     //--------------------------------------------------------------------
@@ -418,15 +480,16 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
-bool test_basic() {
-    std::cout << "------ Running test: on basic dense matrix" << std::endl;
+bool test_basic(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on basic dense matrix"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/dense_128_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, false)) {
+    if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -435,10 +498,11 @@ bool test_basic() {
     }
 }
 
-bool test_basic_sparse() {
-    std::cout << "------ Running test: on basic sparse matrix" << std::endl;
+bool test_basic_sparse(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on basic sparse matrix"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
-    if (spmv_test_harness(mat_f, false)) {
+    if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -447,15 +511,16 @@ bool test_basic_sparse() {
     }
 }
 
-bool test_large_sparse() {
-    std::cout << "------ Running test: on uniform 100K 10" << std::endl;
+bool test_large_sparse(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on uniform 100K 10"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/uniform_100K_10_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(mat_f, false)) {
+    if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -464,15 +529,16 @@ bool test_large_sparse() {
     }
 }
 
-bool test_gplus() {
-    std::cout << "------ Running test: on google_plus" << std::endl;
+bool test_gplus(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on google_plus"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, false)) {
+    if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -481,15 +547,16 @@ bool test_gplus() {
     }
 }
 
-bool test_ogbl_ppa() {
-    std::cout << "------ Running test: on ogbl_ppa" << std::endl;
+bool test_ogbl_ppa(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on ogbl_ppa"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, false)) {
+    if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -498,15 +565,16 @@ bool test_ogbl_ppa() {
     }
 }
 
-bool test_pokec() {
-    std::cout << "------ Running test: on pokec" << std::endl;
+bool test_pokec(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on pokec"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/pokec_1633K_31M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -515,15 +583,16 @@ bool test_pokec() {
     }
 }
 
-bool test_hollywood() {
-    std::cout << "------ Running test: on hollywood" << std::endl;
+bool test_hollywood(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on hollywood"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/hollywood_1M_113M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -532,15 +601,16 @@ bool test_hollywood() {
     }
 }
 
-bool test_ogbn_products() {
-    std::cout << "------ Running test: on ogbn_products" << std::endl;
+bool test_ogbn_products(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on ogbn_products"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/ogbn_products_2M_124M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -549,15 +619,16 @@ bool test_ogbn_products() {
     }
 }
 
-bool test_mouse_gene() {
-    std::cout << "------ Running test: on mouse_gene" << std::endl;
+bool test_mouse_gene(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on mouse_gene"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/mouse_gene_45K_29M_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -566,15 +637,16 @@ bool test_mouse_gene() {
     }
 }
 
-bool test_transformer_50_t() {
-    std::cout << "------ Running test: on transformer-50-t" << std::endl;
+bool test_transformer_50_t(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on transformer-50-t"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/pruned_neural_network/transformer_50_512_33288_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -583,15 +655,16 @@ bool test_transformer_50_t() {
     }
 }
 
-bool test_transformer_95_t() {
-    std::cout << "------ Running test: on transformer-95-t" << std::endl;
+bool test_transformer_95_t(SEMIRING_T semiring) {
+    std::cout << "------ Running test: on transformer-95-t"
+			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/pruned_neural_network/transformer_95_512_33288_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -599,6 +672,7 @@ bool test_transformer_95_t() {
         return false;
     }
 }
+
 
 //---------------------------------------------------------------
 // main
@@ -606,17 +680,23 @@ bool test_transformer_95_t() {
 
 int main (int argc, char** argv) {
     bool passed = true;
-    // passed = passed && test_basic();
-    // passed = passed && test_basic_sparse();
-    // passed = passed && test_large_sparse();
-    passed = passed && test_pokec();
-    passed = passed && test_hollywood();
-    passed = passed && test_gplus();
-    passed = passed && test_ogbl_ppa();
-    passed = passed && test_ogbn_products();
-    passed = passed && test_mouse_gene();
-    // passed = passed && test_transformer_50_t();
-    // passed = passed && test_transformer_95_t();
+    // passed = passed && test_basic(ARITHMETIC_SEMIRING);
+    // passed = passed && test_basic_sparse(ARITHMETIC_SEMIRING);
+    // passed = passed && test_large_sparse(ARITHMETIC_SEMIRING);
+    // passed = passed && test_pokec(ARITHMETIC_SEMIRING);
+    // passed = passed && test_hollywood(ARITHMETIC_SEMIRING);
+    // passed = passed && test_gplus(ARITHMETIC_SEMIRING);
+    // passed = passed && test_ogbl_ppa(ARITHMETIC_SEMIRING);
+    // passed = passed && test_ogbn_products(ARITHMETIC_SEMIRING);
+    passed = passed && test_mouse_gene(ARITHMETIC_SEMIRING);
+    passed = passed && test_transformer_50_t(ARITHMETIC_SEMIRING);
+    passed = passed && test_transformer_95_t(ARITHMETIC_SEMIRING);
+    passed = passed && test_mouse_gene(BOOLEAN_SEMIRING);
+    passed = passed && test_transformer_50_t(BOOLEAN_SEMIRING);
+    passed = passed && test_transformer_95_t(BOOLEAN_SEMIRING);
+    passed = passed && test_mouse_gene(TROPICAL_SEMIRING);
+    passed = passed && test_transformer_50_t(TROPICAL_SEMIRING);
+    passed = passed && test_transformer_95_t(TROPICAL_SEMIRING);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;

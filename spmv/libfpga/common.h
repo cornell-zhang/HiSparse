@@ -24,7 +24,25 @@ const unsigned IBITS = 8;
 const unsigned FBITS = 32 - IBITS;
 typedef unsigned IDX_T;
 typedef ap_ufixed<32, IBITS, AP_RND, AP_SAT> VAL_T;
+typedef char SEMIRING_T;
+#define ARITHMETIC_SEMIRING 0
+#define BOOLEAN_SEMIRING 1
+#define TROPICAL_SEMIRING 2
 #define VAL_T_BITCAST(v) (v(31,0))
+#ifndef __SYNTHESIS__
+std::string semiring_to_str(SEMIRING_T semiring) {
+    switch (semiring) {
+        case ARITHMETIC_SEMIRING:
+            return "arithmetic";
+        case BOOLEAN_SEMIRING:
+            return "boolean";
+        case TROPICAL_SEMIRING:
+            return "tropical";
+        default:
+            return "UNDEFINED";
+    }
+}
+#endif
 
 //-------------------------------------------------------------------------
 // kernel-memory interface packet types
@@ -150,7 +168,7 @@ std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
 const unsigned FIFO_DEPTH = 64;
 
 const unsigned OB_BANK_SIZE = 1024 * 8;
-const unsigned VB_BANK_SIZE = 1024 * 3;
+const unsigned VB_BANK_SIZE = 1024 * 4;
 
 // const unsigned OB_BANK_SIZE = 128;
 // const unsigned VB_BANK_SIZE = 512;

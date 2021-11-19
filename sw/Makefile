@@ -1,5 +1,5 @@
 PROJ_ROOT = ..
-IMPL := float
+IMPL := fixed
 ifeq ($(IMPL), float)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
