@@ -1,4 +1,5 @@
 TARGET := hw_emu
+IMPL := float_pob
 
 DEVICE = /opt/xilinx/platforms/xilinx_u280_xdma_201920_3/xilinx_u280_xdma_201920_3.xpfm
 
@@ -14,6 +15,12 @@ ifneq ($(TARGET), hw)
 	CLFLAGS += -g
 else
 	LDCLFLAGS += --optimize 3
+endif
+
+ifeq ($(IMPL), float_pob)
+	CLFLAGS += -DFP_POB
+else
+	CLFLAGS += -DFP_STALL
 endif
 
 SPMV_XCLBIN = $(IMP_DIR)/spmv.xclbin

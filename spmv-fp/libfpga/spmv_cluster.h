@@ -7,8 +7,12 @@
 #include "common.h"
 #include "shuffle.h"
 #include "vecbuf_access_unit.h"
-// #include "pe-pob.h"
+#ifdef FP_POB
+#include "pe-pob.h"
+#endif
+#ifdef FP_STALL
 #include "pe-stall.h"
+#endif
 
 #include <hls_stream.h>
 #include <ap_fixed.h>

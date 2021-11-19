@@ -1,6 +1,9 @@
 PROJ_ROOT = ..
-IMPL := float
-ifeq ($(IMPL), float)
+IMPL := float_pob
+ifeq ($(IMPL), float_pob)
+	HW_DIR = $(PROJ_ROOT)/spmv-fp
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
+else ifeq ($(IMPL), float_stall)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
 else
@@ -34,23 +37,29 @@ CXXFLAGS += -Wno-maybe-uninitialized
 CXXFLAGS += -Wno-uninitialized
 CXXFLAGS += -Wno-int-in-bool-context
 
+$(HW_DIR)/build_dir.hw_emu/spmv.xclbin:
+	cd $(HW_DIR); make -j5 build TARGET=hw_emu IMPL=$(IMPL)
+
+$(HW_DIR)/build_dir.hw/spmv.xclbin:
+	cd $(HW_DIR); make -j5 build TARGET=hw IMPL=$(IMPL)
+
 host: host.cpp
 	$(CXX) $(CXXFLAGS) -g $(xcl2_SRCS) $< -o host $(LDFLAGS)
 
-benchmark: benchmark.cpp
+benchmark: benchmark.cpp $(HW_DIR)/build_dir.hw/spmv.xclbin
 	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
-# ./bm.sh
+	./bm.sh $(HW_DIR)/build_dir.hw/spmv.xclbin
 
 measure_matrix: measure_matrix.cpp
 	$(CXX) $(CXXFLAGS) $(xcl2_SRCS) $< -o measure_matrix $(LDFLAGS)
 	./measure_matrix
 
 .PHONY: hw_emu hw
-hw_emu: host
+hw_emu: host $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 	cp $(HW_DIR)/emconfig.json .
 	./host hw_emu $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 
-hw: host
+hw: host $(HW_DIR)/build_dir.hw/spmv.xclbin
 	./host hw $(HW_DIR)/build_dir.hw/spmv.xclbin
 
 .PHONY: clean cleanall

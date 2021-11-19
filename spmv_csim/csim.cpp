@@ -19,7 +19,7 @@
 // C-simulation wrapper
 //---------------------------------------------------------------
 
-unsigned long long top_wrapper (
+void top_wrapper (
     const SPMV_MAT_PKT_T *matrix_hbm_0,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_1,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_2,       // in
@@ -46,7 +46,6 @@ unsigned long long top_wrapper (
 ) {
     hls::stream<VEC_AXIS_T> vec_VL_to_SK0, vec_VL_to_SK1, vec_VL_to_relay, vec_relay_to_SK2;
     hls::stream<VEC_AXIS_T> res_SK0_to_RD, res_SK1_to_RD, res_SK2_to_relay, res_relay_to_RD;
-    unsigned long long sf1_iter_cnt[3];
 
     // std::cout << "INFO : [top wrapper] SpMV Kernel Started: row partition " << row_part_id
     //           << " with " << part_len << " rows per cluster" << std::endl;
@@ -61,7 +60,7 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Vector Loader Complete" << std::endl;
 
-    sf1_iter_cnt[0] = spmv_sk0 (
+    spmv_sk0 (
         matrix_hbm_0,
         matrix_hbm_1,
         matrix_hbm_2,
@@ -76,7 +75,7 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Sub-kernel 0 Complete" << std::endl;
 
-    sf1_iter_cnt[1] = spmv_sk1 (
+    spmv_sk1 (
         matrix_hbm_4,
         matrix_hbm_5,
         matrix_hbm_6,
@@ -100,7 +99,7 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Relay: VL->SK2 Complete" << std::endl;
 
-    sf1_iter_cnt[2] = spmv_sk2 (
+    spmv_sk2 (
         matrix_hbm_10,
         matrix_hbm_11,
         matrix_hbm_12,
@@ -134,8 +133,6 @@ unsigned long long top_wrapper (
 
     // std::cout << "INFO : [top wrapper] Result Drain Complete" << std::endl;
     // std::cout << "INFO : [top wrapper] SpMV Kernel Complete" << std::endl;
-    return ull_max<3>(sf1_iter_cnt);
-
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -329,7 +326,6 @@ bool spmv_test_harness (
     std::cout << "INFO : Invoking kernel:" << std::endl;
     std::cout << "  row_partitions: " << num_row_partitions << std::endl;
     std::cout << "  col_partitions: " << num_col_partitions << std::endl;
-    unsigned long long sf1_iter_cnt = 0;
     size_t rows_per_ch_in_last_row_part;
     if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
         rows_per_ch_in_last_row_part = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
@@ -341,7 +337,7 @@ bool spmv_test_harness (
         if (row_part_id == num_row_partitions - 1) {
             part_len = rows_per_ch_in_last_row_part;
         }
-        sf1_iter_cnt += top_wrapper (
+        top_wrapper (
             channel_packets[0].data(),
             channel_packets[1].data(),
             channel_packets[2].data(),
@@ -368,7 +364,6 @@ bool spmv_test_harness (
         );
     }
     std::cout << "INFO : SpMV kernel complete!" << std::endl;
-    std::cout << "INFO : Max Shuffle 1 iteration count: " << sf1_iter_cnt << std::endl;
 
     //--------------------------------------------------------------------
     // compute reference

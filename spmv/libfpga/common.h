@@ -150,7 +150,7 @@ std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
 const unsigned FIFO_DEPTH = 64;
 
 const unsigned OB_BANK_SIZE = 1024 * 8;
-const unsigned VB_BANK_SIZE = 1024 * 3;
+const unsigned VB_BANK_SIZE = 1024 * 4;
 
 // const unsigned OB_BANK_SIZE = 128;
 // const unsigned VB_BANK_SIZE = 512;

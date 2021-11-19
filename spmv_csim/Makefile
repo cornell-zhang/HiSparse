@@ -43,9 +43,9 @@ copy_files:
 	cp $(HW_DIR)/spmv_sk2.cpp csim_headers/spmv_sk2.h
 	cp $(LIBFPGA_DIR)/*.h csim_headers/
 
-csim: csim.cpp # copy_files
+csim: csim.cpp copy_files
 	$(CXX) $(CXXFLAGS) $< -o csim $(LDFLAGS)
-# ./csim
+	 ./csim
 
 .PHONY: clean cleanall
 clean:

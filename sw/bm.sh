@@ -16,12 +16,7 @@ NN_DATASETS=(transformer_50_512_33288_csr_float32.npz
              transformer_90_512_33288_csr_float32.npz
              transformer_95_512_33288_csr_float32.npz)
 
-# fixed-point bitstream
-# bitstream=/work/shared/common/project_build/graphblas/graphlily-synthesize/spmv-syn/obl3-fwd/build_dir.hw/spmv.xclbin
-# floating-point bitstream (pob)
-# bitstream=/work/shared/common/project_build/graphblas/graphlily-synthesize/spmv-syn/fp-pob/build_dir.hw/spmv.xclbin
-# floating-point bitstream (stall)
-bitstream=/home/yd383/Multi-Die-HBM-SpMV/spmv-fp/build_dir.hw/spmv.xclbin
+bitstream=$1
 
 for ((i = 0; i < ${#GRAPH_DATASETS[@]}; i++)) do
     ./benchmark $bitstream $GRAPH_DATASET_PATH/${GRAPH_DATASETS[i]}
