@@ -42,16 +42,21 @@ void float_pe_process(
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
 
-        pld = input.read();
+        bool valid = false;
+        UPDATE_PLD_T pld;
+        if(input.read_nb(pld)) {
 #ifdef PE_LINE_TRACING
         std::cout << "  input payload: " << pld << std::endl;
 #endif
-        if (pld.inst == EOD) {
-            exit = true;
-            valid = false;
+            if (pld.inst == EOD) {
+                exit = true;
+                valid = false;
+            } else {
+                exit = false;
+                valid = true;
+            }
         } else {
-            exit = false;
-            valid = true;
+            valid = false;
         }
 
         if (valid) {

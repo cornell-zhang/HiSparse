@@ -31,3 +31,8 @@ monolithic_spmv/host
 xrt.ini
 presim.tcl
 
+# downloaded datasets
+datasets/graph
+datasets/pruned_nn
+datasets/sparse_datasets.zip
+

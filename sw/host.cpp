@@ -347,10 +347,10 @@ bool spmv_test_harness (
         OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 3, (unsigned)part_len));
         OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
 
+        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader)); // enqueue this first?
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
         runtime.command_queue.finish();
         std::cout << "INFO : SpMV Kernel Finished: row partition " << row_part_id << std::endl;

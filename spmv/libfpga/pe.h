@@ -53,14 +53,20 @@ void ufixed_pe_process(
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
         #pragma HLS dependence variable=ifwq intra true
-        // TODO: use non-blocking read to ensure IFWQ is shifted every cycle?
-        UPDATE_PLD_T pld = input.read();
-        bool valid = true;
+        bool valid = false;
+        UPDATE_PLD_T pld;
+        if(input.read_nb(pld)) {
 #ifdef PE_LINE_TRACING
         std::cout << "  input payload: " << pld << std::endl;
 #endif
-        if (pld.inst == EOD) {
-            exit = true;
+            if (pld.inst == EOD) {
+                exit = true;
+                valid = false;
+            } else {
+                exit = false;
+                valid = true;
+            }
+        } else {
             valid = false;
         }
 
