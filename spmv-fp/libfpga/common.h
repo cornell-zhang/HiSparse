@@ -175,13 +175,17 @@ const unsigned FIFO_DEPTH = 64;
 const unsigned FPADD_LATENCY = 4;
 
 // used for pe-pob
-// const unsigned DEP_DISTANCE = 1 + FPADD_LATENCY + 1 + 1;
-// const unsigned OB_BANK_SIZE = 1024;
+#ifdef FP_POB
+const unsigned DEP_DISTANCE = 1 + FPADD_LATENCY + 1 + 1;
+const unsigned OB_BANK_SIZE = 1024;
+const unsigned INTERLEAVE_FACTOR = 1;
+#endif
 
 // used for pe-stall
+#ifdef FP_STALL
 const unsigned OB_BANK_SIZE = 1024 * 8;
-// const unsigned OB_BANK_SIZE = 8190;
 const unsigned INTERLEAVE_FACTOR = 8;
+#endif
 
 const unsigned VB_BANK_SIZE = 1024 * 4;
 

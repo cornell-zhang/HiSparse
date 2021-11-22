@@ -1,5 +1,5 @@
 PROJ_ROOT = ..
-IMPL := float_pob
+IMPL := fixed
 ifeq ($(IMPL), float_pob)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
@@ -17,8 +17,8 @@ CXX := g++
 
 CXXFLAGS += -Wall -std=c++11
 
-CXXFLAGS += -I/work/shared/common/project_build/graphblas/software/cnpy
-LDFLAGS += -L/work/shared/common/project_build/graphblas/software/cnpy/build -lcnpy
+CXXFLAGS += -I$(CNPY_INCLUDE)
+LDFLAGS += -L$(CNPY_LIB) -lcnpy
 
 CXXFLAGS += -I$(PROJ_ROOT)/sw
 CXXFLAGS += -I$(LIBFPGA_DIR)
@@ -49,10 +49,6 @@ host: host.cpp
 benchmark: benchmark.cpp $(HW_DIR)/build_dir.hw/spmv.xclbin
 	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
 	./bm.sh $(HW_DIR)/build_dir.hw/spmv.xclbin
-
-measure_matrix: measure_matrix.cpp
-	$(CXX) $(CXXFLAGS) $(xcl2_SRCS) $< -o measure_matrix $(LDFLAGS)
-	./measure_matrix
 
 .PHONY: hw_emu hw
 hw_emu: host $(HW_DIR)/build_dir.hw_emu/spmv.xclbin

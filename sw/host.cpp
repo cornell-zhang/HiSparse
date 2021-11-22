@@ -501,12 +501,12 @@ bool test_ogbl_ppa(cl_runtime &runtime) {
     }
 }
 
-bool test_transformer_50_t() {
+bool test_transformer_50_t(cl_runtime &runtime) {
     std::cout << "------ Running test: on transformer-50-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_50_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(runtime, mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -515,12 +515,12 @@ bool test_transformer_50_t() {
     }
 }
 
-bool test_transformer_95_t() {
+bool test_transformer_95_t(cl_runtime &runtime) {
     std::cout << "------ Running test: on transformer-95-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(mat_f, true)) {
+    if (spmv_test_harness(runtime, mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -597,9 +597,9 @@ int main (int argc, char** argv) {
     if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
         passed = passed && test_ogbl_ppa(runtime);
-        passed = passed && test_transformer_50_t();
+        passed = passed && test_transformer_50_t(runtime);
     }
-    passed = passed && test_transformer_95_t();
+    passed = passed && test_transformer_95_t(runtime);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;
