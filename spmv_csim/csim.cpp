@@ -384,6 +384,30 @@ bool spmv_test_harness (
 // test case utils
 //---------------------------------------------------------------
 
+spmv::io::CSRMatrix<float> create_dense_CSR (
+    unsigned num_rows,
+    unsigned num_cols
+) {
+    spmv::io::CSRMatrix<float> mat_f;
+    mat_f.num_rows = num_rows;
+    mat_f.num_cols = num_cols;
+    mat_f.adj_data.resize(num_rows * num_cols);
+    mat_f.adj_indices.resize(num_rows * num_cols);
+    mat_f.adj_indptr.resize(num_rows + 1);
+
+    for (auto &x : mat_f.adj_data) {x = 1;}
+
+    for (size_t i = 0; i < num_rows; i++) {
+        for (size_t j = 0; j < num_cols; j++) {
+            mat_f.adj_indices[i*num_cols + j] = j;
+        }
+    }
+    for (size_t i = 0; i < num_rows + 1; i++) {
+        mat_f.adj_indptr[i] = num_cols*i;
+    }
+    return mat_f;
+}
+
 spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
     unsigned num_rows,
     unsigned num_cols,
@@ -413,13 +437,12 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
+std::string GRAPH_DATASET_DIR = "../datasets/graph/";
+std::string NN_DATASET_DIR = "../datasets/pruned_nn/";
+
 bool test_basic() {
     std::cout << "------ Running test: on basic dense matrix" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/dense_128_csr_float32.npz"
-        );
+    spmv::io::CSRMatrix<float> mat_f = create_dense_CSR(128, 128);
     for (auto &x : mat_f.adj_data) {x = 1;}
     if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -444,11 +467,7 @@ bool test_basic_sparse() {
 
 bool test_large_sparse() {
     std::cout << "------ Running test: on uniform 100K 10" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/uniform_100K_10_csr_float32.npz"
-        );
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(100000, 100000, 10);
     for (auto &x : mat_f.adj_data) {x = 1;}
     if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -462,10 +481,7 @@ bool test_large_sparse() {
 bool test_gplus() {
     std::cout << "------ Running test: on google_plus" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "gplus_108K_13M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -479,10 +495,7 @@ bool test_gplus() {
 bool test_ogbl_ppa() {
     std::cout << "------ Running test: on ogbl_ppa" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbl_ppa_576K_42M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -496,10 +509,7 @@ bool test_ogbl_ppa() {
 bool test_pokec() {
     std::cout << "------ Running test: on pokec" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/pokec_1633K_31M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "pokec_1633K_31M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -513,10 +523,7 @@ bool test_pokec() {
 bool test_hollywood() {
     std::cout << "------ Running test: on hollywood" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/hollywood_1M_113M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "hollywood_1M_113M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -530,10 +537,7 @@ bool test_hollywood() {
 bool test_ogbn_products() {
     std::cout << "------ Running test: on ogbn_products" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/ogbn_products_2M_124M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbn_products_2M_124M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -547,10 +551,7 @@ bool test_ogbn_products() {
 bool test_mouse_gene() {
     std::cout << "------ Running test: on mouse_gene" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/sparse_matrix_graph/mouse_gene_45K_29M_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "mouse_gene_45K_29M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -564,10 +565,7 @@ bool test_mouse_gene() {
 bool test_transformer_50_t() {
     std::cout << "------ Running test: on transformer-50-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/pruned_neural_network/transformer_50_512_33288_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_50_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -581,10 +579,7 @@ bool test_transformer_50_t() {
 bool test_transformer_95_t() {
     std::cout << "------ Running test: on transformer-95-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(
-            "/work/shared/common/project_build/graphblas/"
-            "data/pruned_neural_network/transformer_95_512_33288_csr_float32.npz"
-        );
+        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -601,17 +596,17 @@ bool test_transformer_95_t() {
 
 int main (int argc, char** argv) {
     bool passed = true;
-    // passed = passed && test_basic();
-    // passed = passed && test_basic_sparse();
-    // passed = passed && test_large_sparse();
+    passed = passed && test_basic();
+    passed = passed && test_basic_sparse();
+    passed = passed && test_large_sparse();
     passed = passed && test_pokec();
     passed = passed && test_hollywood();
     passed = passed && test_gplus();
     passed = passed && test_ogbl_ppa();
     passed = passed && test_ogbn_products();
     passed = passed && test_mouse_gene();
-    // passed = passed && test_transformer_50_t();
-    // passed = passed && test_transformer_95_t();
+    passed = passed && test_transformer_50_t();
+    passed = passed && test_transformer_95_t();
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;

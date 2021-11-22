@@ -379,6 +379,29 @@ bool spmv_test_harness (
 //---------------------------------------------------------------
 // test case utils
 //---------------------------------------------------------------
+spmv::io::CSRMatrix<float> create_dense_CSR (
+    unsigned num_rows,
+    unsigned num_cols
+) {
+    spmv::io::CSRMatrix<float> mat_f;
+    mat_f.num_rows = num_rows;
+    mat_f.num_cols = num_cols;
+    mat_f.adj_data.resize(num_rows * num_cols);
+    mat_f.adj_indices.resize(num_rows * num_cols);
+    mat_f.adj_indptr.resize(num_rows + 1);
+
+    for (auto &x : mat_f.adj_data) {x = 1;}
+
+    for (size_t i = 0; i < num_rows; i++) {
+        for (size_t j = 0; j < num_cols; j++) {
+            mat_f.adj_indices[i*num_cols + j] = j;
+        }
+    }
+    for (size_t i = 0; i < num_rows + 1; i++) {
+        mat_f.adj_indptr[i] = num_cols*i;
+    }
+    return mat_f;
+}
 
 spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
     unsigned num_rows,
@@ -409,12 +432,12 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
-std::string DATASET_DIR = "/work/shared/common/project_build/graphblas/data/sparse_matrix_graph/";
+std::string GRAPH_DATASET_DIR = "../datasets/graph/";
+std::string NN_DATASET_DIR = "../datasets/pruned_nn/";
 
 bool test_basic(cl_runtime &runtime) {
     std::cout << "------ Running test: on basic dense matrix " << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(DATASET_DIR + "dense_128_csr_float32.npz");
+    spmv::io::CSRMatrix<float> mat_f = create_dense_CSR(128, 128);
     for (auto &x : mat_f.adj_data) {x = 1;}
     if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -439,8 +462,7 @@ bool test_basic_sparse(cl_runtime &runtime) {
 
 bool test_medium_sparse(cl_runtime &runtime) {
     std::cout << "------ Running test: on uniform 10K 10 (100K, 1M) " << std::endl;
-    spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(DATASET_DIR + "uniform_10K_10_csr_float32.npz");
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(10000, 10000, 10);
     for (auto &x : mat_f.adj_data) {x = 1;}
     if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -454,7 +476,7 @@ bool test_medium_sparse(cl_runtime &runtime) {
 bool test_gplus(cl_runtime &runtime) {
     std::cout << "------ Running test: on google_plus (108K, 13M) " << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(DATASET_DIR + "gplus_108K_13M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "gplus_108K_13M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(runtime, mat_f, false)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -468,9 +490,37 @@ bool test_gplus(cl_runtime &runtime) {
 bool test_ogbl_ppa(cl_runtime &runtime) {
     std::cout << "------ Running test: on ogbl_ppa (576K, 42M) " << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(DATASET_DIR + "ogbl_ppa_576K_42M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbl_ppa_576K_42M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_transformer_50_t() {
+    std::cout << "------ Running test: on transformer-50-t" << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_50_512_33288_csr_float32.npz");
+    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
+    if (spmv_test_harness(mat_f, true)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_transformer_95_t() {
+    std::cout << "------ Running test: on transformer-95-t" << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
+    for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
+    if (spmv_test_harness(mat_f, true)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -547,7 +597,9 @@ int main (int argc, char** argv) {
     if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
         passed = passed && test_ogbl_ppa(runtime);
+        passed = passed && test_transformer_50_t();
     }
+    passed = passed && test_transformer_95_t();
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;
