@@ -43,14 +43,18 @@ $(HW_DIR)/build_dir.hw_emu/spmv.xclbin:
 $(HW_DIR)/build_dir.hw/spmv.xclbin:
 	cd $(HW_DIR); make -j5 build TARGET=hw IMPL=$(IMPL)
 
+.PHONY: demo host hw_emu hw benchmark
 host: host.cpp
 	$(CXX) $(CXXFLAGS) -g $(xcl2_SRCS) $< -o host $(LDFLAGS)
 
+demo: benchmark.cpp ../demo_spmv.xclbin
+	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
+	./bm.sh ../demo_spmv.xclbin fixed
+
 benchmark: benchmark.cpp $(HW_DIR)/build_dir.hw/spmv.xclbin
 	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
-	./bm.sh $(HW_DIR)/build_dir.hw/spmv.xclbin
+	./bm.sh $(HW_DIR)/build_dir.hw/spmv.xclbin $(IMPL)
 
-.PHONY: hw_emu hw
 hw_emu: host $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 	cp $(HW_DIR)/emconfig.json .
 	./host hw_emu $(HW_DIR)/build_dir.hw_emu/spmv.xclbin

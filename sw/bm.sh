@@ -17,11 +17,19 @@ NN_DATASETS=(transformer_50_512_33288_csr_float32.npz
              transformer_95_512_33288_csr_float32.npz)
 
 bitstream=$1
+impl=$2
+vb=4
+if [ $impl = "float_pob" ]
+then
+    ob=1
+else
+    ob=8
+fi
 
 for ((i = 0; i < ${#GRAPH_DATASETS[@]}; i++)) do
-    ./benchmark $bitstream $GRAPH_DATASET_PATH/${GRAPH_DATASETS[i]}
+    ./benchmark $bitstream $GRAPH_DATASET_PATH/${GRAPH_DATASETS[i]} $vb $ob
 done
 
 for ((i = 0; i < ${#NN_DATASETS[@]}; i++)) do
-    ./benchmark $bitstream $NN_DATASET_PATH/${NN_DATASETS[i]}
+    ./benchmark $bitstream $NN_DATASET_PATH/${NN_DATASETS[i]} $vb $ob
 done

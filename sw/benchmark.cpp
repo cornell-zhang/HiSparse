@@ -26,20 +26,7 @@ const int DDR[2] = {CHANNEL_NAME(32), CHANNEL_NAME(33)};
 template<typename T>
 using aligned_vector = std::vector<T, aligned_allocator<T> >;
 
-
-//---------------------------------------------------------------
-// datasets to be tested
-//---------------------------------------------------------------
-const unsigned NUM_RUNS = 1000 * 300;
-// std::string DATASET_PATH = "/work/shared/common/project_build/graphblas/data/sparse_matrix_graph/";
-// std::vector<std::string> DATASETS = {
-//     "gplus_108K_13M_csr_float32.npz",
-//     "ogbl_ppa_576K_42M_csr_float32.npz",
-//     "hollywood_1M_113M_csr_float32.npz",
-//     "pokec_1633K_31M_csr_float32.npz",
-//     "ogbn_products_2M_124M_csr_float32.npz",
-//     "orkut_3M_213M_csr_float32.npz",
-// };
+const unsigned NUM_RUNS = 50;
 
 //---------------------------------------------------------------
 // benchmark utils
@@ -357,18 +344,6 @@ benckmark_result spmv_benchmark (
     bmark_res.spmv_time_ms = total_time / NUM_RUNS;
     bmark_res.throughput_GBPS = gbs / (bmark_res.spmv_time_ms / 1000);
     bmark_res.throughput_GOPS = Mops / bmark_res.spmv_time_ms;
-
-    //--------------------------------------------------------------------
-    // release host & device memory
-    //--------------------------------------------------------------------
-    // for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
-    //     err = clReleaseMemObject(channel_packets_buf[c]());
-    //     CHECK_ERR(err);
-    // }
-    // err = clReleaseMemObject(vector_buf());
-    // CHECK_ERR(err);
-    // err = clReleaseMemObject(result_buf());
-    // CHECK_ERR(err);
 
     return bmark_res;
 }
