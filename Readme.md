@@ -30,7 +30,22 @@ printenv VITIS
 ```
 the path to the Vitis installation should appear if it's correctly set up.
 
-### 4. Build and run the design
+### 4. Run the pre-complied bitstream
+This repo has a pre-complied fixed-point bitstream: ```dempo_spmv.xclbin```.
+You can directly run it using
+```
+cd sw
+make demo
+```
+The benchmark results will be printed out as the program is running, in the format as:
+```
+{Preprocessing: 0.64566 s | SpMV: 0.77102 ms | 49.4087 GBPS | 12.9698 GOPS }
+```
+The numbers are: pre-processing time, SpMV run time, SpMV data throughput, SpMV operation throughput.
+
+Note: data throughput = operation throughput / 2 * 8.
+
+### 5. Build and run the design
 ```
 cd sw
 make benchmark IMPL=<fixed/float_pob/float_stall>
