@@ -1,5 +1,6 @@
 # <u>Hi</u>gh-Performance <u>Sparse</u> Linear Algebra on HBM-Equipped FPGAs Using HLS: A Case Study on SpMV (HiSparse)
 
+[![DOI](https://zenodo.org/badge/396456469.svg)](https://zenodo.org/badge/latestdoi/396456469)
 This work is accepted by FPGA 2022.
 
 ## To reproduce the results
