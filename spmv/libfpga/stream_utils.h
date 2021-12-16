@@ -14,9 +14,12 @@ void axis_duplicate(
     while (!exit) {
         #pragma HLS pipeline II=1
         VEC_AXIS_T pkt = in.read();
+        VEC_AXIS_T pkt_reg = reg(reg(pkt));
+        VEC_AXIS_T pkt_replicas[N];
         for (unsigned k = 0; k < N; k++) {
             #pragma HLS unroll
-            out[k].write(pkt);
+            pkt_replicas[k] = reg(pkt_reg);
+            out[k].write(pkt_replicas[k]);
         }
         exit = (pkt.user == EOS);
     }

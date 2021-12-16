@@ -1,6 +1,6 @@
 TARGET := hw_emu
 UNIT := pe_tb
-IMPL := float
+IMPL := fixed
 
 DEVICE = /opt/xilinx/platforms/xilinx_u280_xdma_201920_3/xilinx_u280_xdma_201920_3.xpfm
 
