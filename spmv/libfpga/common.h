@@ -12,6 +12,18 @@
 #include <iomanip>
 #endif
 
+#ifdef __SYNTHESIS__
+#include "utils/x_hls_utils.h" // for reg() function
+#else
+#ifndef REG_FOR_SW_EMU
+#define REG_FOR_SW_EMU
+template<typename T>
+T reg(T in) {
+    return in;
+}
+#endif
+#endif
+
 //-------------------------------------------------------------------------
 // overlay configurations
 //-------------------------------------------------------------------------

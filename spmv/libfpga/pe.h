@@ -6,18 +6,6 @@
 
 #include "common.h"
 
-#ifdef __SYNTHESIS__
-#include "utils/x_hls_utils.h" // for reg() function
-#else
-#ifndef REG_FOR_SW_EMU
-#define REG_FOR_SW_EMU
-template<typename T>
-T reg(T in) {
-    return in;
-}
-#endif
-#endif
-
 #ifndef __SYNTHESIS__
 // #define PE_LINE_TRACING
 #endif
@@ -53,6 +41,7 @@ void ufixed_pe_process(
         #pragma HLS pipeline II=1
         #pragma HLS dependence variable=output_buffer inter false
         #pragma HLS dependence variable=ifwq intra true
+        #pragma HLS dependence variable=ifwq inter false
         bool valid = false;
         UPDATE_PLD_T pld;
         if(input.read_nb(pld)) {
@@ -70,32 +59,32 @@ void ufixed_pe_process(
             valid = false;
         }
 
+        IN_FLIGHT_WRITE ifwq_new_entry;
+        IDX_T bank_addr = pld.row_idx / pack_size;
+        VAL_T incr = pld.mat_val * pld.vec_val;
+        VAL_T q = output_buffer[bank_addr];
+        VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
+                      ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
+                      ((bank_addr == ifwq[2].addr) && ifwq[2].valid) ? ifwq[2].value :
+                      ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
+                      ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
+                      q;
+        VAL_T new_q = q_fwd + incr;
+        #pragma HLS bind_op variable=new_q op=add impl=dsp latency=0
+        VAL_T new_q_reg = reg(new_q); // force a register after addition
+        ifwq_new_entry.addr = bank_addr;
+        ifwq_new_entry.value = new_q;
+        ifwq_new_entry.valid = valid;
+
         if (valid) {
-            IDX_T bank_addr = pld.row_idx / pack_size;
-            VAL_T incr = pld.mat_val * pld.vec_val;
-            VAL_T q = output_buffer[bank_addr];
-            VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
-                          ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
-                          ((bank_addr == ifwq[2].addr) && ifwq[2].valid) ? ifwq[2].value :
-                          ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
-                          ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
-                          q;
-            VAL_T new_q = q_fwd + incr;
-            #pragma HLS bind_op variable=new_q op=add impl=dsp latency=0
-            VAL_T new_q_reg = reg(new_q); // force a register after addition
             output_buffer[bank_addr] = new_q_reg;
-            ifwq[4] = ifwq[3];
-            ifwq[3] = ifwq[2];
-            ifwq[2] = ifwq[1];
-            ifwq[1] = ifwq[0];
-            ifwq[0] = (IN_FLIGHT_WRITE){true, bank_addr, new_q};
-        } else {
-            ifwq[4] = ifwq[3];
-            ifwq[3] = ifwq[2];
-            ifwq[2] = ifwq[1];
-            ifwq[1] = ifwq[0];
-            ifwq[0] = (IN_FLIGHT_WRITE){false, 0, 0};
         }
+
+        ifwq[4] = ifwq[3];
+        ifwq[3] = ifwq[2];
+        ifwq[2] = ifwq[1];
+        ifwq[1] = ifwq[0];
+        ifwq[0] = ifwq_new_entry;
 
     }
 }

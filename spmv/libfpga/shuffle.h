@@ -16,7 +16,7 @@
 unsigned long long iter_cnt = 0;
 #endif
 
-const unsigned ARBITER_LATENCY = 5;
+const unsigned ARBITER_LATENCY = 7;
 //------------------------------------------------------------
 // arbiters (2 overloads)
 //------------------------------------------------------------
@@ -176,11 +176,38 @@ void arbiter_1p(
 // #endif
 }
 
+//------------------------------------------------------------
+// crossbar
+//------------------------------------------------------------
+template<typename PayloadT, unsigned num_lanes>
+void crossbar(
+    ap_uint<num_lanes> in_valid,
+    ap_uint<num_lanes> out_valid,
+    unsigned select[num_lanes],
+    PayloadT in[num_lanes],
+    hls::stream<PayloadT> output_lanes[num_lanes]
+) {
+    // #pragma HLS pipeline II=1
+    // #pragma HLS latency min=8 max=8
+    #pragma HLS inline
+    for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        #pragma HLS unroll
+        if (out_valid[OLid]) {
+            if (in_valid[select[OLid]]) {
+                output_lanes[OLid].write(in[select[OLid]]);
+            }
+        }
+    }
+}
+
+
+//------------------------------------------------------------
+// shuffler core: works on 1 partition
+//------------------------------------------------------------
 // shuffler states
 #define SF_WORKING 0 // normal working state
 #define SF_ENDING 1 // flushing the remaining packets in the arbiter
 
-// shuffler core: works on 1 partition
 template<typename PayloadT, unsigned num_lanes>
 void shuffler_core(
     // fifos
@@ -226,9 +253,8 @@ void shuffler_core(
     loop_shuffle_pipeline:
     while (!loop_exit) {
         #pragma HLS pipeline II=1
-        #pragma HLS dependence variable=resend inter RAW true distance=6
-        #pragma HLS dependence variable=payload_resend inter RAW true distance=6
-        // #pragma HLS dependence variable=in_addr inter RAW true distance=6
+        #pragma HLS dependence variable=resend inter RAW true distance=9
+        #pragma HLS dependence variable=payload_resend inter RAW true distance=9
 
         // Fetch stage (F)
 // #ifndef __SYNTHESIS__
@@ -251,7 +277,8 @@ void shuffler_core(
             if (resend[ILid]) {
                 valid[ILid] = 1;
                 payload[ILid] = payload_resend[ILid];
-            } else if (fetch_complete[ILid]) {
+            } else
+            if (fetch_complete[ILid]) {
                 valid[ILid] = 0;
                 payload[ILid] = (PayloadT){0,0,0,0};
             } else {
@@ -310,25 +337,26 @@ void shuffler_core(
         // ------- end of A stage
 
         // crossbar stage (C)
-        for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
-            #pragma HLS unroll
-            if (xbar_valid[OLid]) {
-                if (valid[xbar_sel[OLid]]) {
-                    output_lanes[OLid].write(payload[xbar_sel[OLid]]);
-                }
-            }
-// #ifndef __SYNTHESIS__
-//             if (line_tracing_shuffle_core) {
-//                 if (state == SF_WORKING) {
-//                     std::cout << "  Shuffle core: OLane " << OLid << ", "
-//                             << "sel: " << xbar_sel[OLid] << ", "
-//                             << "payload: " << payload[xbar_sel[OLid]] << ", "
-//                             << "p-valid:" << (valid[xbar_sel[OLid]] ? "x" : ".") << ", "
-//                             << "x-valid: " << (xbar_valid[OLid] ? "x" : ".") << std::endl;
-//                 }
-//             }
-// #endif
-        }
+        crossbar<PayloadT, num_lanes>(
+            valid,
+            xbar_valid,
+            xbar_sel,
+            payload_resend,
+            output_lanes
+        );
+#ifndef __SYNTHESIS__
+        // if (line_tracing_shuffle_core) {
+        //     for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        //         if (state == SF_WORKING) {
+        //             std::cout << "  Shuffle core: OLane " << OLid << ", "
+        //                     << "sel: " << xbar_sel[OLid] << ", "
+        //                     << "payload: " << payload_resend[xbar_sel[OLid]] << ", "
+        //                     << "p-valid:" << (valid[xbar_sel[OLid]] ? "x" : ".") << ", "
+        //                     << "x-valid: " << (xbar_valid[OLid] ? "x" : ".") << std::endl;
+        //         }
+        //     }
+        // }
+#endif
         // ------- end of C stage
 
         // line tracing for debug
