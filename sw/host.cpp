@@ -495,12 +495,14 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
-std::string GRAPH_DATASET_DIR = "../datasets/graph/";
-std::string NN_DATASET_DIR = "../datasets/pruned_nn/";
-
-bool test_basic(cl_runtime &runtime) {
-    std::cout << "------ Running test: on basic dense matrix " << std::endl;
-    spmv::io::CSRMatrix<float> mat_f = create_dense_CSR(128, 128);
+bool test_basic(cl_runtime &runtime, SEMIRING_T semiring) {
+    std::cout << "------ Running test: on basic dense matrix "
+              << " (" << semiring_to_str(semiring) << ")" << std::endl;
+    spmv::io::CSRMatrix<float> mat_f =
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/dense_128_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1;}
     if (spmv_test_harness(runtime, mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -591,7 +593,7 @@ bool test_transformer_95_t(cl_runtime &runtime) {
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, true)) {
+    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
