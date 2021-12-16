@@ -21,20 +21,9 @@ CXXFLAGS += -Wno-misleading-indentation
 CXXFLAGS += -Wno-int-in-bool-context
 CXXFLAGS += -Wno-unused-label
 CXXFLAGS += -Wno-sign-compare
-<<<<<<< HEAD
-CXXFLAGS += -Wno-maybe-uninitialized
-CXXFLAGS += -Wno-uninitialized
-
-ifeq ($(IMPL), float_pob)
-	HW_DIR = $(PROJ_ROOT)/spmv-fp
-	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
-	CXXFLAGS += -DFP_POB
-else ifeq ($(IMPL), float_stall)
-=======
 CXXFLAGS += -Wmaybe-uninitialized
 CXXFLAGS += -Wuninitialized
 ifeq ($(IMPL), float)
->>>>>>> 851aa50e95c4d27ac8b7c26fcf708ea438b7d421
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
 	CXXFLAGS += -DFP_STALL

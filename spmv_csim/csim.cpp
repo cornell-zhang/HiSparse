@@ -451,30 +451,6 @@ bool spmv_test_harness (
 // test case utils
 //---------------------------------------------------------------
 
-spmv::io::CSRMatrix<float> create_dense_CSR (
-    unsigned num_rows,
-    unsigned num_cols
-) {
-    spmv::io::CSRMatrix<float> mat_f;
-    mat_f.num_rows = num_rows;
-    mat_f.num_cols = num_cols;
-    mat_f.adj_data.resize(num_rows * num_cols);
-    mat_f.adj_indices.resize(num_rows * num_cols);
-    mat_f.adj_indptr.resize(num_rows + 1);
-
-    for (auto &x : mat_f.adj_data) {x = 1;}
-
-    for (size_t i = 0; i < num_rows; i++) {
-        for (size_t j = 0; j < num_cols; j++) {
-            mat_f.adj_indices[i*num_cols + j] = j;
-        }
-    }
-    for (size_t i = 0; i < num_rows + 1; i++) {
-        mat_f.adj_indptr[i] = num_cols*i;
-    }
-    return mat_f;
-}
-
 spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
     unsigned num_rows,
     unsigned num_cols,
@@ -557,7 +533,10 @@ bool test_gplus(SEMIRING_T semiring) {
     std::cout << "------ Running test: on google_plus"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "gplus_108K_13M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/gplus_108K_13M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -572,7 +551,10 @@ bool test_ogbl_ppa(SEMIRING_T semiring) {
     std::cout << "------ Running test: on ogbl_ppa"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbl_ppa_576K_42M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/ogbl_ppa_576K_42M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, false, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -587,7 +569,10 @@ bool test_pokec(SEMIRING_T semiring) {
     std::cout << "------ Running test: on pokec"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "pokec_1633K_31M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/pokec_1633K_31M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -602,7 +587,10 @@ bool test_hollywood(SEMIRING_T semiring) {
     std::cout << "------ Running test: on hollywood"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "hollywood_1M_113M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/hollywood_1M_113M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -617,7 +605,10 @@ bool test_ogbn_products(SEMIRING_T semiring) {
     std::cout << "------ Running test: on ogbn_products"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbn_products_2M_124M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/ogbn_products_2M_124M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -632,7 +623,10 @@ bool test_mouse_gene(SEMIRING_T semiring) {
     std::cout << "------ Running test: on mouse_gene"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "mouse_gene_45K_29M_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/sparse_matrix_graph/mouse_gene_45K_29M_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -647,7 +641,10 @@ bool test_transformer_50_t(SEMIRING_T semiring) {
     std::cout << "------ Running test: on transformer-50-t"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_50_512_33288_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/pruned_neural_network/transformer_50_512_33288_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;
@@ -662,7 +659,10 @@ bool test_transformer_95_t(SEMIRING_T semiring) {
     std::cout << "------ Running test: on transformer-95-t"
 			  << " (" << semiring_to_str(semiring) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
-        spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
+        spmv::io::load_csr_matrix_from_float_npz(
+            "/work/shared/common/project_build/graphblas/"
+            "data/pruned_neural_network/transformer_95_512_33288_csr_float32.npz"
+        );
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
     if (spmv_test_harness(mat_f, true, semiring)) {
         std::cout << "INFO : Testcase passed." << std::endl;

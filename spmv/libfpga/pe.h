@@ -99,7 +99,7 @@ void ufixed_pe_process(
 
         IN_FLIGHT_WRITE ifwq_new_entry;
         IDX_T bank_addr = pld.row_idx / pack_size;
-        VAL_T incr = pld.mat_val * pld.vec_val;
+        VAL_T incr = pe_binary_operator(pld.mat_val, pld.vec_val, semiring);
         VAL_T q = output_buffer[bank_addr];
         VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
                       ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
@@ -107,7 +107,7 @@ void ufixed_pe_process(
                       ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
                       ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
                       q;
-        VAL_T new_q = q_fwd + incr;
+        VAL_T new_q = pe_reduction_operator(q_fwd, incr, semiring);
         #pragma HLS bind_op variable=new_q op=add impl=dsp latency=0
         VAL_T new_q_reg = reg(new_q); // force a register after addition
         ifwq_new_entry.addr = bank_addr;
@@ -115,17 +115,6 @@ void ufixed_pe_process(
         ifwq_new_entry.valid = valid;
 
         if (valid) {
-            IDX_T bank_addr = pld.row_idx / pack_size;
-            VAL_T incr = pe_binary_operator(pld.mat_val, pld.vec_val, semiring);
-            VAL_T q = output_buffer[bank_addr];
-            VAL_T q_fwd = ((bank_addr == ifwq[0].addr) && ifwq[0].valid) ? ifwq[0].value :
-                          ((bank_addr == ifwq[1].addr) && ifwq[1].valid) ? ifwq[1].value :
-                          ((bank_addr == ifwq[2].addr) && ifwq[2].valid) ? ifwq[2].value :
-                          ((bank_addr == ifwq[3].addr) && ifwq[3].valid) ? ifwq[3].value :
-                          ((bank_addr == ifwq[4].addr) && ifwq[4].valid) ? ifwq[4].value :
-                          q;
-            VAL_T new_q = pe_reduction_operator(q_fwd, incr, semiring);
-            VAL_T new_q_reg = reg(new_q); // force a register after addition
             output_buffer[bank_addr] = new_q_reg;
         }
 
