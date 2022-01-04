@@ -1,7 +1,16 @@
 # <u>Hi</u>gh-Performance <u>Sparse</u> Linear Algebra on HBM-Equipped FPGAs Using HLS: A Case Study on SpMV (HiSparse)
 
-[![DOI](https://zenodo.org/badge/396456469.svg)](https://zenodo.org/badge/latestdoi/396456469)
-This work is accepted by FPGA 2022.
+Artifact available: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5818992.svg)](https://doi.org/10.5281/zenodo.5818992)
+
+HiSparse is a high-performance accelerator for sparse-matrix vcetor multiplication (SpMV).
+Implemented on a multi-die HBM-equipped FPGA device, HiSparse achieves 237MHz and delivers promising
+speedup with increased bandwidth efficiency when compared to prior arts on CPUs, GPUs, and FPGAs.
+
+This work is to apprear in FPGA 2022.
+
+## Prerequisites
+* Platform: Xilinx Alveo U280
+* Toolchain: Xilinx Vitis 2020.2
 
 ## To reproduce the results
 ### 1. Colne this repo and download the datasets
