@@ -1,6 +1,6 @@
 # <u>Hi</u>gh-Performance <u>Sparse</u> Linear Algebra on HBM-Equipped FPGAs Using HLS: A Case Study on SpMV (HiSparse)
 
-Artifact available: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5818992.svg)](https://doi.org/10.5281/zenodo.5818992)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5819246.svg)](https://doi.org/10.5281/zenodo.5819246)
 
 HiSparse is a high-performance accelerator for sparse-matrix vcetor multiplication (SpMV).
 Implemented on a multi-die HBM-equipped FPGA device, HiSparse achieves 237MHz and delivers promising
