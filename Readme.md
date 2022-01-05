@@ -23,7 +23,7 @@ For more information, please refer to [our FPGA 2022 paper](https://github.com/c
 ## To reproduce the results
 ### 1. Colne this repo and download the datasets
 ```
-git clone https://github.com/yxd97/HiSparse.git
+git clone https://github.com/cornell-zhang/HiSparse.git
 cd datasets
 source download.sh
 ```
