@@ -6,7 +6,15 @@ HiSparse is a high-performance accelerator for sparse-matrix vcetor multiplicati
 Implemented on a multi-die HBM-equipped FPGA device, HiSparse achieves 237MHz and delivers promising
 speedup with increased bandwidth efficiency when compared to prior arts on CPUs, GPUs, and FPGAs.
 
-This work is to apprear in FPGA 2022.
+For more information, please refer to [our FPGA 2022 paper](https://github.com/cornell-zhang/HiSparse/blob/master/fpgafp193a-du.pdf).
+```
+@article{du2022hisparse,
+  title={{High-Performance Sparse Linear Algebra on HBM-Equipped FPGAs Using HLS: A Case Study on SpMV}},
+  author={Du, Yixiao and Hu, Yuwei and Zhou, Zhongchun and Zhang, Zhiru},
+  journal={{Int'l Symp. on Field-Programmable Gate Arrays (FPGA)}},
+  year={2022}
+}
+```
 
 ## Prerequisites
 * Platform: Xilinx Alveo U280
