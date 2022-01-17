@@ -63,17 +63,38 @@ void compute_ref(
     spmv::io::CSRMatrix<float> &mat,
     std::vector<float> &vector,
     std::vector<float> &ref_result,
+    std::vector<float> &mask,
     SEMIRING_T semiring,
+    MASK_OP_T mask_option,
     float zero
 ) {
     ref_result.resize(mat.num_rows);
     std::fill(ref_result.begin(), ref_result.end(), zero);
     for (size_t row_idx = 0; row_idx < mat.num_rows; row_idx++) {
-        IDX_T start = mat.adj_indptr[row_idx];
-        IDX_T end = mat.adj_indptr[row_idx + 1];
-        for (size_t i = start; i < end; i++) {
-            IDX_T idx = mat.adj_indices[i];
-            ref_result[row_idx] = semiring_mac(ref_result[row_idx], mat.adj_data[i], vector[idx], semiring);
+        bool result_valid = false;
+        switch (mask_option) {
+        case MASK_WRITE_TO_ALL:
+            result_valid = true;
+            break;
+        case MASK_WRITE_TO_ZERO:
+            result_valid = (mask[row_idx] == zero);
+            break;
+        case MASK_WRITE_TO_NON_ZERO:
+            result_valid = (mask[row_idx] != zero);
+            break;
+        default:
+            result_valid = false;
+            break;
+        }
+        if (result_valid) {
+            IDX_T start = mat.adj_indptr[row_idx];
+            IDX_T end = mat.adj_indptr[row_idx + 1];
+            for (size_t i = start; i < end; i++) {
+                IDX_T idx = mat.adj_indices[i];
+                ref_result[row_idx] = semiring_mac(ref_result[row_idx], mat.adj_data[i], vector[idx], semiring);
+            }
+        } else {
+            ref_result[row_idx] = zero;
         }
     }
 }
@@ -170,7 +191,8 @@ bool spmv_test_harness (
     cl_runtime &runtime,
     spmv::io::CSRMatrix<float> &ext_matrix,
     bool skip_empty_rows,
-    SEMIRING_T semiring
+    SEMIRING_T semiring,
+    MASK_OP_T mask_option
 ) {
     using namespace spmv::io;
     //--------------------------------------------------------------------
@@ -201,7 +223,9 @@ bool spmv_test_harness (
     // load and format the matrix
     //--------------------------------------------------------------------
     std::cout << "INFO : Test started" << std::endl;
+    std::cout << "INFO : original matrix size: " << ext_matrix.num_rows << " x " << ext_matrix.num_cols << std::endl;
     util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
+    std::cout << "                 rounded to: " << ext_matrix.num_rows << " x " << ext_matrix.num_cols << std::endl;
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
 
     size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
@@ -292,11 +316,24 @@ bool spmv_test_harness (
     // generate input vector
     //--------------------------------------------------------------------
     std::vector<float> vector_f(ext_matrix.num_cols);
-    std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
+    std::generate(vector_f.begin(), vector_f.end(), [&](){return (rand() % 2) ? 1 : float_zero;});
     aligned_vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
     for (size_t i = 0; i < vector.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
             vector[i].data[k] = VAL_T(vector_f[i*PACK_SIZE + k]);
+        }
+    }
+
+    //--------------------------------------------------------------------
+    // generate input mask
+    //--------------------------------------------------------------------
+    std::vector<float> mask_f(ext_matrix.num_rows);
+    std::generate(mask_f.begin(), mask_f.end(), [&](){return (rand() % 2) ? 1 : float_zero;});
+    std::vector<PACKED_VAL_T> mask(mat.num_rows / PACK_SIZE);
+    // std::cout << "INFO : # of mask packets: " << mask.size() << std::endl;
+    for (size_t i = 0; i < mask.size(); i++) {
+        for (size_t k = 0; k < PACK_SIZE; k++) {
+            mask[i].data[k] = VAL_T(mask_f[i*PACK_SIZE + k]);
         }
     }
 
@@ -335,15 +372,18 @@ bool spmv_test_harness (
         CHECK_ERR(err);
     }
 
-    // Handle vector and result
+    // Handle vector, result, and mask
     CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
     CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[21]);
+    CL_CREATE_EXT_PTR(mask_ext, mask.data(), HBM[22]);
     size_t vector_size = sizeof(VAL_T) * mat.num_cols;
     size_t result_size = sizeof(VAL_T) * mat.num_rows;
     cl::Buffer vector_buf
         = CL_BUFFER_RDONLY(runtime.context, vector_size, vector_ext, err);
     cl::Buffer result_buf
         = CL_BUFFER_WRONLY(runtime.context, result_size, result_ext, err);
+    cl::Buffer mask_buf
+        = CL_BUFFER_RDONLY(runtime.context, result_size, mask_ext, err);
     CHECK_ERR(err);
 
     // transfer data
@@ -352,7 +392,7 @@ bool spmv_test_harness (
         {channel_packets_buf[c]}, 0 /* 0 means from host*/));
     }
     OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects(
-        {vector_buf}, 0 /* 0 means from host*/));
+        {vector_buf, mask_buf}, 0 /* 0 means from host*/));
     runtime.command_queue.finish();
     std::cout << "INFO : Host -> Device data transfer complete!" << std::endl;
 
@@ -388,6 +428,9 @@ bool spmv_test_harness (
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
+    OCL_CHECK(err, err = runtime.result_drain.setArg(1, mask_buf));
+    OCL_CHECK(err, err = runtime.result_drain.setArg(6, val_zero));
+    OCL_CHECK(err, err = runtime.result_drain.setArg(7, mask_option));
 
     size_t rows_per_ch_in_last_row_part;
     if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
@@ -408,7 +451,7 @@ bool spmv_test_harness (
         OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 3, (unsigned)part_len));
         OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 2, (unsigned)row_part_id));
         OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 3, (unsigned)part_len));
-        OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
+        OCL_CHECK(err, err = runtime.result_drain.setArg(2, (unsigned)row_part_id));
 
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
@@ -424,7 +467,7 @@ bool spmv_test_harness (
     // compute reference
     //--------------------------------------------------------------------
     std::vector<float> ref_result;
-    compute_ref(ext_matrix, vector_f, ref_result, semiring, float_zero);
+    compute_ref(ext_matrix, vector_f, ref_result, mask_f, semiring, mask_option, float_zero);
     std::cout << "INFO : Compute reference complete!" << std::endl;
 
     //--------------------------------------------------------------------
@@ -436,6 +479,19 @@ bool spmv_test_harness (
 
     std::vector<VAL_T> upk_result;
     unpack_vector(result, upk_result);
+    for (size_t i = 0; i < upk_result.size(); i++) {
+        bool ref_inf = ref_result[i] >= FLOAT_INF;
+        bool res_inf = float(upk_result[i]) >= 255;
+        bool msk_inf = mask_f[i] >= FLOAT_INF;
+        bool inf_match = ref_inf && res_inf;
+        bool eps_match = abs(float(upk_result[i]) - ref_result[i]) < 0.0001;
+        bool match = inf_match || eps_match;
+        std::cout << (match ? "[   Match]" : "[Mismatch]");
+        printf(" i = %4ld, ", i);
+        std::cout << "reference = " << (ref_inf ? "inf" : std::to_string(ref_result[i])) << ", ";
+        std::cout << "results = " << (res_inf ? "inf" : std::to_string(float(upk_result[i]))) << ", ";
+        std::cout << "mask = " << (msk_inf ? "inf" : std::to_string(mask_f[i])) << std::endl;
+    }
     return verify(ref_result, upk_result);
 }
 
@@ -495,16 +551,20 @@ spmv::io::CSRMatrix<float> create_uniform_sparse_CSR (
 //---------------------------------------------------------------
 // test cases
 //---------------------------------------------------------------
-bool test_basic(cl_runtime &runtime, SEMIRING_T semiring) {
+std::string GRAPH_DATASET_DIR = "/work/shared/common/project_build/graphblas/data/sparse_matrix_graph/";
+std::string NN_DATASET_DIR = "/work/shared/common/project_build/graphblas/data/pruned_neural_network/";
+
+bool test_basic(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on basic dense matrix "
-              << " (" << semiring_to_str(semiring) << ")" << std::endl;
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/dense_128_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+    if (spmv_test_harness(runtime, mat_f, false, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -513,11 +573,12 @@ bool test_basic(cl_runtime &runtime, SEMIRING_T semiring) {
     }
 }
 
-bool test_basic_sparse(cl_runtime &runtime, SEMIRING_T semiring) {
+bool test_small_sparse(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on basic sparse matrix "
-              << " (" << semiring_to_str(semiring) << ")" << std::endl;
-    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(128, 128, 10);
+    if (spmv_test_harness(runtime, mat_f, false, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -526,16 +587,31 @@ bool test_basic_sparse(cl_runtime &runtime, SEMIRING_T semiring) {
     }
 }
 
-bool test_medium_sparse(cl_runtime &runtime, SEMIRING_T semiring) {
+bool test_basic_sparse(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
+    std::cout << "------ Running test: on basic sparse matrix "
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(1000, 1024, 10);
+    if (spmv_test_harness(runtime, mat_f, false, semiring, mask_option)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
+bool test_medium_sparse(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on uniform 10K 10 (100K, 1M) "
-              << " (" << semiring_to_str(semiring) << ")" << std::endl;
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(
             "/work/shared/common/project_build/graphblas/"
             "data/sparse_matrix_graph/uniform_10K_10_csr_float32.npz"
         );
     for (auto &x : mat_f.adj_data) {x = 1;}
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+    if (spmv_test_harness(runtime, mat_f, false, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -544,13 +620,14 @@ bool test_medium_sparse(cl_runtime &runtime, SEMIRING_T semiring) {
     }
 }
 
-bool test_gplus(cl_runtime &runtime, SEMIRING_T semiring) {
+bool test_gplus(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on google_plus (108K, 13M) "
-              << " (" << semiring_to_str(semiring) << ")" << std::endl;
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "gplus_108K_13M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+    if (spmv_test_harness(runtime, mat_f, true, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -559,13 +636,14 @@ bool test_gplus(cl_runtime &runtime, SEMIRING_T semiring) {
     }
 }
 
-bool test_ogbl_ppa(cl_runtime &runtime, SEMIRING_T semiring) {
+bool test_ogbl_ppa(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on ogbl_ppa (576K, 42M) "
-              << " (" << semiring_to_str(semiring) << ")" << std::endl;
+              << " (" << semiring_to_str(semiring) << ")"
+			  << " (" << mask_op_to_str(mask_option) << ")" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "ogbl_ppa_576K_42M_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+    if (spmv_test_harness(runtime, mat_f, true, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -574,12 +652,12 @@ bool test_ogbl_ppa(cl_runtime &runtime, SEMIRING_T semiring) {
     }
 }
 
-bool test_transformer_50_t(cl_runtime &runtime) {
+bool test_transformer_50_t(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on transformer-50-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_50_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, true)) {
+    if (spmv_test_harness(runtime, mat_f, true, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -588,12 +666,12 @@ bool test_transformer_50_t(cl_runtime &runtime) {
     }
 }
 
-bool test_transformer_95_t(cl_runtime &runtime) {
+bool test_transformer_95_t(cl_runtime &runtime, SEMIRING_T semiring, MASK_OP_T mask_option) {
     std::cout << "------ Running test: on transformer-95-t" << std::endl;
     spmv::io::CSRMatrix<float> mat_f =
         spmv::io::load_csr_matrix_from_float_npz(NN_DATASET_DIR + "transformer_95_512_33288_csr_float32.npz");
     for (auto &x : mat_f.adj_data) {x = 1 / mat_f.num_cols;}
-    if (spmv_test_harness(runtime, mat_f, false, semiring)) {
+    if (spmv_test_harness(runtime, mat_f, true, semiring, mask_option)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -664,21 +742,34 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
-    passed = passed && test_basic(runtime, ARITHMETIC_SEMIRING);
-    passed = passed && test_basic_sparse(runtime, ARITHMETIC_SEMIRING);
-    passed = passed && test_medium_sparse(runtime, ARITHMETIC_SEMIRING);
-    passed = passed && test_basic(runtime, BOOLEAN_SEMIRING);
-    passed = passed && test_basic_sparse(runtime, BOOLEAN_SEMIRING);
-    passed = passed && test_medium_sparse(runtime, BOOLEAN_SEMIRING);
-    passed = passed && test_basic(runtime, TROPICAL_SEMIRING);
-    passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING);
-    passed = passed && test_medium_sparse(runtime, TROPICAL_SEMIRING);
-    passed = passed && test_gplus(runtime, ARITHMETIC_SEMIRING);
-    passed = passed && test_ogbl_ppa(runtime, ARITHMETIC_SEMIRING);
-    passed = passed && test_gplus(runtime, BOOLEAN_SEMIRING);
-    passed = passed && test_ogbl_ppa(runtime, BOOLEAN_SEMIRING);
-    passed = passed && test_gplus(runtime, TROPICAL_SEMIRING);
-    passed = passed && test_ogbl_ppa(runtime, TROPICAL_SEMIRING);
+    // passed = passed && test_basic(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_medium_sparse(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_medium_sparse(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_medium_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_gplus(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_ogbl_ppa(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_gplus(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_ogbl_ppa(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_gplus(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_ogbl_ppa(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+
+    // passed = passed && test_basic_sparse(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_ZERO);
+    // passed = passed && test_basic_sparse(runtime, ARITHMETIC_SEMIRING, MASK_WRITE_TO_NON_ZERO);
+    // passed = passed && test_basic_sparse(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_ZERO);
+    // passed = passed && test_basic_sparse(runtime, BOOLEAN_SEMIRING, MASK_WRITE_TO_NON_ZERO);
+    // passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ALL);
+    // passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_ZERO);
+    // passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_NON_ZERO);
+
+    // passed = passed && test_basic(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_NON_ZERO);
+    passed = passed && test_basic_sparse(runtime, TROPICAL_SEMIRING, MASK_WRITE_TO_NON_ZERO);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;

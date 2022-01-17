@@ -10,15 +10,23 @@
 extern "C" {
 void spmv_result_drain(
     PACKED_VAL_T *packed_dense_result,      // out
+    const PACKED_VAL_T *packed_dense_mask,  // in
     const unsigned row_part_id,             // in
-    // const unsigned rows_per_c_in_partition, // in
     hls::stream<VEC_AXIS_T> &from_SLR0,     // out
     hls::stream<VEC_AXIS_T> &from_SLR1,     // out
-    hls::stream<VEC_AXIS_T> &from_SLR2      // out
+    hls::stream<VEC_AXIS_T> &from_SLR2,     // out
+    VAL_T zero,                             // in
+    MASK_OP_T mask_option                   // in
 ) {
     #pragma HLS interface m_axi port=packed_dense_result offset=slave bundle=spmv_vin
+    #pragma HLS interface m_axi port=packed_dense_mask offset=slave bundle=spmv_msk
     #pragma HLS interface s_axilite port=packed_dense_result bundle=control
+    #pragma HLS interface s_axilite port=packed_dense_mask bundle=control
+
     #pragma HLS interface s_axilite port=row_part_id bundle=control
+    #pragma HLS interface s_axilite port=zero bundle=control
+    #pragma HLS interface s_axilite port=mask_option bundle=control
+
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=from_SLR0
@@ -37,6 +45,7 @@ void spmv_result_drain(
     result_drain_main_loop:
     while (!exit) {
         #pragma HLS pipeline II=1
+        // get packets from clusters on 3 SLRs
         VEC_AXIS_T pkt;
         bool do_write = false;
         switch (current_input) {
@@ -101,20 +110,54 @@ void spmv_result_drain(
         } // switch (current_input)
         exit = finished.and_reduce();
 
+        // mask off invalid results
         unsigned abs_pkt_idx = write_counter + pkt_idx_offset;
+        PACKED_VAL_T mask_pkt = packed_dense_mask[abs_pkt_idx];;
+        ap_uint<PACK_SIZE> result_valid = 0;
+
+        switch (mask_option) {
+        case MASK_WRITE_TO_ALL:
+            result_valid = (1 << PACK_SIZE) - 1;
+            break;
+        case MASK_WRITE_TO_ZERO:
+            for (unsigned k = 0; k < PACK_SIZE; k++) {
+                #pragma HLS unroll
+                result_valid[k] = (mask_pkt.data[k] == zero);
+            }
+            break;
+        case MASK_WRITE_TO_NON_ZERO:
+            for (unsigned k = 0; k < PACK_SIZE; k++) {
+                #pragma HLS unroll
+                result_valid[k] = (mask_pkt.data[k] != zero);
+            }
+            break;
+        default:
+            result_valid = 0;
+            break;
+        }
+
+        if (do_write) {
+            write_counter++;
+        }
+
+        // write results to gmem
         if (do_write) {
             PACKED_VAL_T rout;
             for (unsigned k = 0; k < PACK_SIZE; k++) {
                 #pragma HLS unroll
-                VAL_T_BITCAST(rout.data[k]) = VEC_AXIS_VAL(pkt, k);
+                VAL_T_BITCAST(rout.data[k]) = result_valid[k] ? VEC_AXIS_VAL(pkt, k) : VAL_T_BITCAST(zero);
             }
-            write_counter++;
             packed_dense_result[abs_pkt_idx] = rout;
         }
 
 #ifdef SPMV_RESULT_DRAIN_LINE_TRACING
         if (do_write) {
-            std::cout << ", written to " << abs_pkt_idx << std::endl;
+            std::cout << "\n  --> via mask: " << mask_pkt << "[" << abs_pkt_idx << "]";
+            if (result_valid.or_reduce()) {
+                std::cout << ", written to " << abs_pkt_idx << std::endl;
+            } else {
+                std::cout << std::endl;
+            }
         } else {
             std::cout << std::endl;
         }

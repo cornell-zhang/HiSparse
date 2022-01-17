@@ -36,10 +36,17 @@ const unsigned IBITS = 8;
 const unsigned FBITS = 32 - IBITS;
 typedef unsigned IDX_T;
 typedef ap_ufixed<32, IBITS, AP_RND, AP_SAT> VAL_T;
+
 typedef char SEMIRING_T;
 #define ARITHMETIC_SEMIRING 0
 #define BOOLEAN_SEMIRING 1
 #define TROPICAL_SEMIRING 2
+
+typedef char MASK_OP_T;
+#define MASK_WRITE_TO_ALL 0
+#define MASK_WRITE_TO_ZERO 1
+#define MASK_WRITE_TO_NON_ZERO 2
+
 #define VAL_T_BITCAST(v) (v(31,0))
 #ifndef __SYNTHESIS__
 std::string semiring_to_str(SEMIRING_T semiring) {
@@ -50,6 +57,19 @@ std::string semiring_to_str(SEMIRING_T semiring) {
             return "boolean";
         case TROPICAL_SEMIRING:
             return "tropical";
+        default:
+            return "UNDEFINED";
+    }
+}
+
+std::string mask_op_to_str(MASK_OP_T mask_option) {
+    switch (mask_option) {
+        case MASK_WRITE_TO_ALL:
+            return "write to all";
+        case MASK_WRITE_TO_ZERO:
+            return "write to zero";
+        case MASK_WRITE_TO_NON_ZERO:
+            return "write to non-zero";
         default:
             return "UNDEFINED";
     }
@@ -70,6 +90,18 @@ typedef struct {
 typedef SPMV_MAT_PKT_T SPMSPV_MAT_PKT_T;
 
 typedef struct {IDX_T index; VAL_T val;} IDX_VAL_T;
+
+
+#ifndef __SYNTHESIS__
+std::ostream& operator<<(std::ostream& os, const PACKED_VAL_T &p) {
+    os << '{';
+    for (unsigned i = 0; i < PACK_SIZE; i++) {
+        os << p.data[i] << ((i == PACK_SIZE - 1) ? "" : "|");
+    }
+    os << '}';
+    return os;
+}
+#endif
 
 //-------------------------------------------------------------------------
 // intra-kernel dataflow payload types

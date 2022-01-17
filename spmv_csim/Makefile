@@ -21,8 +21,8 @@ CXXFLAGS += -Wno-misleading-indentation
 CXXFLAGS += -Wno-int-in-bool-context
 CXXFLAGS += -Wno-unused-label
 CXXFLAGS += -Wno-sign-compare
-CXXFLAGS += -Wmaybe-uninitialized
-CXXFLAGS += -Wuninitialized
+CXXFLAGS += -Wno-maybe-uninitialized
+CXXFLAGS += -Wno-uninitialized
 ifeq ($(IMPL), float)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
