@@ -302,6 +302,7 @@ bool spmv_test_harness (
     //--------------------------------------------------------------------
     std::vector<float> vector_f(ext_matrix.num_cols);
     std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
+    // std::generate(vector_f.begin(), vector_f.end(), [&](){return 1.0;});
     std::vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
     for (size_t i = 0; i < vector.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
