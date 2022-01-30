@@ -154,6 +154,7 @@ void vecbuf_access_unit(
     VAL_T vector_buffer[bank_size];
     #pragma HLS stream off variable=vector_buffer
     #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=URAM
+    // #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=BRAM
 
     // +1 due to consuming the last EOS
     for (unsigned i = 0; i < num_partitions + 1; i++) {

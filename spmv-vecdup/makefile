@@ -5,7 +5,8 @@ DEVICE = /opt/xilinx/platforms/xilinx_u280_xdma_201920_3/xilinx_u280_xdma_201920
 HLS_DIR := ./_x.$(TARGET)
 IMP_DIR := ./build_dir.$(TARGET)
 
-VPP := v++
+FAKETIME_PREFIX := LD_PRELOAD=$(HOME)/install/usr/local/lib/faketime/libfaketime.so.1 FAKETIME="-1y"
+VPP := $(FAKETIME_PREFIX) v++
 
 CLFLAGS += -t $(TARGET) --platform $(DEVICE) --save-temps
 CLFLAGS += -I./libfpga

@@ -6,6 +6,9 @@ ifeq ($(IMPL), float_pob)
 else ifeq ($(IMPL), float_stall)
 	HW_DIR = $(PROJ_ROOT)/spmv-fp
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-fp/libfpga
+else ifeq ($(IMPL), fixed_vecdup)
+	HW_DIR = $(PROJ_ROOT)/spmv-vecdup
+	LIBFPGA_DIR = $(PROJ_ROOT)/spmv-vecdup/libfpga
 else
 	HW_DIR = $(PROJ_ROOT)/spmv
 	LIBFPGA_DIR = $(PROJ_ROOT)/spmv/libfpga

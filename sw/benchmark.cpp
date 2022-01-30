@@ -110,7 +110,8 @@ benckmark_result spmv_benchmark (
     util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
     size_t logical_ob_size = ob_bank_size * PACK_SIZE * NUM_HBM_CHANNELS;
-    size_t logical_vb_size = vb_bank_size * PACK_SIZE;
+    // size_t logical_vb_size = vb_bank_size * PACK_SIZE;
+    size_t logical_vb_size = vb_bank_size;
     size_t num_row_partitions = (mat.num_rows + logical_ob_size - 1) / logical_ob_size;
     size_t num_col_partitions = (mat.num_cols + logical_vb_size - 1) / logical_vb_size;
     size_t num_partitions = num_row_partitions * num_col_partitions;
