@@ -109,9 +109,10 @@ void CPSR_matrix_loader(
 // #define SPMV_VECTOR_DUPLICATOR_LINE_TRACING
 #endif
 
+template<unsigned N>
 void spmv_vector_duplicator (
     hls::stream<VEC_AXIS_T> &vec_in,
-    hls::stream<VEC_PLD_T> vec_out[PACK_SIZE]
+    hls::stream<VEC_PLD_T> vec_out[N]
 ) {
     bool exit = false;
     bool fetch_new = true;
@@ -123,11 +124,11 @@ void spmv_vector_duplicator (
             pkt = vec_in.read();
         }
         if (pkt.user != SOD && pkt.user != EOD && pkt.user != EOS) {
-            for (unsigned k = 0; k < PACK_SIZE; k++) {
+            for (unsigned k = 0; k < N; k++) {
                 #pragma HLS unroll
                 VEC_PLD_T p;
                 VAL_T_BITCAST(p.val) = VEC_AXIS_VAL(pkt, cnt);
-                p.idx = VEC_AXIS_PKT_IDX(pkt) * PACK_SIZE + cnt;
+                p.idx = VEC_AXIS_PKT_IDX(pkt) * N + cnt;
                 p.inst = pkt.user;
                 vec_out[k].write(p);
 #ifdef SPMV_VECTOR_DUPLICATOR_LINE_TRACING
@@ -135,15 +136,15 @@ void spmv_vector_duplicator (
                   << ", duplicating element " << cnt << " from packet " << VEC_AXIS_PKT_IDX(pkt) << std::endl;
 #endif
             }
-            cnt = (cnt + 1) % PACK_SIZE;
+            cnt = (cnt + 1) % N;
             exit = false;
             fetch_new = (cnt == 0);
         } else {
-            for (unsigned k = 0; k < PACK_SIZE; k++) {
+            for (unsigned k = 0; k < N; k++) {
                 #pragma HLS unroll
                 VEC_PLD_T p;
                 VAL_T_BITCAST(p.val) = VEC_AXIS_VAL(pkt, 0);
-                p.idx = VEC_AXIS_PKT_IDX(pkt) * PACK_SIZE;
+                p.idx = VEC_AXIS_PKT_IDX(pkt) * N;
                 p.inst = pkt.user;
                 vec_out[k].write(p);
 #ifdef SPMV_VECTOR_DUPLICATOR_LINE_TRACING
@@ -235,11 +236,10 @@ void spmv_cluster(
     const unsigned num_col_partitions,      // in
     const unsigned num_partitions           // in
 ) {
-
     hls::stream<EDGE_PLD_T> ML2VAU[PACK_SIZE];
     hls::stream<UPDATE_PLD_T> VAU2PE[PACK_SIZE];
     hls::stream<VEC_PLD_T> PE2PK[PACK_SIZE];
-    hls::stream<VEC_PLD_T> DUP2VAU[PACK_SIZE];
+    hls::stream<VEC_PLD_T> DUP2VAU[PACK_SIZE / 2];
     #pragma HLS stream variable=ML2VAU   depth=FIFO_DEPTH
     #pragma HLS stream variable=VAU2PE   depth=FIFO_DEPTH
     #pragma HLS stream variable=PE2PK   depth=FIFO_DEPTH
@@ -252,7 +252,7 @@ void spmv_cluster(
 
     #pragma HLS dataflow
 
-    spmv_vector_duplicator(
+    spmv_vector_duplicator<PACK_SIZE / 2>(
         vec_in,
         DUP2VAU
     );
@@ -274,54 +274,42 @@ void spmv_cluster(
 
     // set PACK_SIZE to 1 so that VAUs operate
     // in duplication mode
-    vecbuf_access_unit<0, VB_BANK_SIZE, 1>(
+    vecbuf_access_unit_2p<0, VB_BANK_SIZE>(
         ML2VAU[0],
+        ML2VAU[1],
         DUP2VAU[0],
         VAU2PE[0],
-        num_col_partitions
-    );
-    vecbuf_access_unit<1, VB_BANK_SIZE, 1>(
-        ML2VAU[1],
-        DUP2VAU[1],
         VAU2PE[1],
         num_col_partitions
     );
-    vecbuf_access_unit<2, VB_BANK_SIZE, 1>(
+
+    vecbuf_access_unit_2p<1, VB_BANK_SIZE>(
         ML2VAU[2],
-        DUP2VAU[2],
-        VAU2PE[2],
-        num_col_partitions
-    );
-    vecbuf_access_unit<3, VB_BANK_SIZE, 1>(
         ML2VAU[3],
-        DUP2VAU[3],
+        DUP2VAU[1],
+        VAU2PE[2],
         VAU2PE[3],
         num_col_partitions
     );
-    vecbuf_access_unit<4, VB_BANK_SIZE, 1>(
+
+    vecbuf_access_unit_2p<2, VB_BANK_SIZE>(
         ML2VAU[4],
-        DUP2VAU[4],
-        VAU2PE[4],
-        num_col_partitions
-    );
-    vecbuf_access_unit<5, VB_BANK_SIZE, 1>(
         ML2VAU[5],
-        DUP2VAU[5],
+        DUP2VAU[2],
+        VAU2PE[4],
         VAU2PE[5],
         num_col_partitions
     );
-    vecbuf_access_unit<6, VB_BANK_SIZE, 1>(
+
+    vecbuf_access_unit_2p<3, VB_BANK_SIZE>(
         ML2VAU[6],
-        DUP2VAU[6],
-        VAU2PE[6],
-        num_col_partitions
-    );
-    vecbuf_access_unit<7, VB_BANK_SIZE, 1>(
         ML2VAU[7],
-        DUP2VAU[7],
+        DUP2VAU[3],
+        VAU2PE[6],
         VAU2PE[7],
         num_col_partitions
     );
+
 
 #ifdef SPMV_CLUSTER_H_LINE_TRACING
     std::cout << "INFO : [SpMV cluster] Vector Access Unit complete" << std::endl;

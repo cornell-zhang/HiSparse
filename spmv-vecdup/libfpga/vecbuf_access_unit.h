@@ -16,7 +16,7 @@
 #define VR_IDLE 0
 #define VR_WORK 1
 
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned bank_size>
 void vecbuf_reader(
     hls::stream<EDGE_PLD_T> &input,
     hls::stream<UPDATE_PLD_T> &output,
@@ -69,7 +69,7 @@ void vecbuf_reader(
                 pout.inst = 0;
                 pout.mat_val = pin.mat_val;
                 pout.row_idx = pin.row_idx;
-                pout.vec_val = vector_buffer[(abs_addr / pack_size) % bank_size];
+                pout.vec_val = vector_buffer[abs_addr % bank_size];
                 output.write(pout);
 #ifdef VAU_VR_LINE_TRACING
                 std::cout << "  output payload:" << pout << std::endl;
@@ -90,7 +90,7 @@ void vecbuf_reader(
 #define VW_IDLE 0
 #define VW_WORK 1
 
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned bank_size>
 void vecbuf_writer(
     hls::stream<VEC_PLD_T> &vec_input,
     VAL_T vector_buffer[bank_size] // double buffering
@@ -126,7 +126,7 @@ void vecbuf_writer(
             } else {
                 IDX_T abs_addr = pin.idx;
                 VAL_T vec_val = pin.val;
-                vector_buffer[(abs_addr / pack_size) % bank_size] = vec_val;
+                vector_buffer[abs_addr % bank_size] = vec_val;
             }
             break;
 
@@ -143,8 +143,7 @@ void vecbuf_writer(
 
 // 1 VAU pipeline
 // the col_idx in the input is absolute index
-// bank_addr = (abs_col_idx / pack_size) % bank_size
-template<int id, unsigned bank_size, unsigned pack_size>
+template<int id, unsigned bank_size>
 void vecbuf_access_unit(
     hls::stream<EDGE_PLD_T> &input,
     hls::stream<VEC_PLD_T> &vec_input,
@@ -152,15 +151,40 @@ void vecbuf_access_unit(
     unsigned num_partitions
 ) {
     VAL_T vector_buffer[bank_size];
-    #pragma HLS stream off variable=vector_buffer
-    #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=URAM
-    // #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=BRAM
+    #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=BRAM
+    // #pragma HLS stream off variable=vector_buffer
+    // #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=URAM
 
     // +1 due to consuming the last EOS
     for (unsigned i = 0; i < num_partitions + 1; i++) {
-        #pragma HLS dataflow
-        vecbuf_writer<id, bank_size, pack_size>(vec_input, vector_buffer);
-        vecbuf_reader<id, bank_size, pack_size>(input, output, vector_buffer);
+        // #pragma HLS dataflow
+        vecbuf_writer<id, bank_size>(vec_input, vector_buffer);
+        vecbuf_reader<id, bank_size>(input, output, vector_buffer);
+    }
+}
+
+// 1 VAU pipeline (serves 2 PEs)
+// the col_idx in the input is absolute index
+template<int id, unsigned bank_size>
+void vecbuf_access_unit_2p(
+    hls::stream<EDGE_PLD_T> &input_a,
+    hls::stream<EDGE_PLD_T> &input_b,
+    hls::stream<VEC_PLD_T> &vec_input,
+    hls::stream<UPDATE_PLD_T> &output_a,
+    hls::stream<UPDATE_PLD_T> &output_b,
+    unsigned num_partitions
+) {
+    VAL_T vector_buffer[bank_size];
+    #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=BRAM
+    // #pragma HLS stream off variable=vector_buffer
+    // #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=URAM
+
+    // +1 due to consuming the last EOS
+    for (unsigned i = 0; i < num_partitions + 1; i++) {
+        // #pragma HLS dataflow
+        vecbuf_writer<id, bank_size>(vec_input, vector_buffer);
+        vecbuf_reader<id, bank_size>(input_a, output_a, vector_buffer);
+        vecbuf_reader<id, bank_size>(input_b, output_b, vector_buffer);
     }
 }
 
