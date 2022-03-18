@@ -80,14 +80,17 @@ void load_duplicate(
 
 void write_k2ks(
     hls::stream<VEC_AXIS_T> &in,                      // in
-    hls::stream<VEC_AXIS_T> &out                      // out
+    hls::stream<VEC_AXIS_IF_T> &out                      // out
 ) {
     bool exit = false;
     loop_fifo2axis:
     while (!exit) {
         #pragma HLS pipeline II=1
         VEC_AXIS_T pkt = in.read();
-        out.write(pkt);
+        VEC_AXIS_IF_T pkt_if;
+        pkt_if.data = pkt.data;
+        pkt_if.user = pkt.user;
+        out.write(pkt_if);
         exit = (pkt.user == EOS);
     }
 }
@@ -96,9 +99,9 @@ extern "C" {
 void spmv_vector_loader(
     const PACKED_VAL_T *packed_dense_vector,               // in
     const unsigned num_cols,                     // in
-    hls::stream<VEC_AXIS_T> &to_SLR0,                      // out
-    hls::stream<VEC_AXIS_T> &to_SLR1,                      // out
-    hls::stream<VEC_AXIS_T> &to_SLR2                       // out
+    hls::stream<VEC_AXIS_IF_T> &to_SLR0,                      // out
+    hls::stream<VEC_AXIS_IF_T> &to_SLR1,                      // out
+    hls::stream<VEC_AXIS_IF_T> &to_SLR2                       // out
 ) {
     #pragma HLS interface m_axi port=packed_dense_vector offset=slave bundle=spmv_vin
     #pragma HLS interface s_axilite port=packed_dense_vector bundle=control

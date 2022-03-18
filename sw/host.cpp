@@ -537,13 +537,13 @@ int main (int argc, char** argv) {
     // parse command-line arguments
     if (argc != 3) {
         std::cout << "Usage: " << argv[0]
-                  << " <hw_emu/hw> <xclbin>" << std::endl;
+                  << " <sw_emu/hw_emu/hw> <xclbin>" << std::endl;
         return 0;
     }
     std::string target = argv[1];
     std::string xclbin = argv[2];
-    if (target != "hw_emu" && target != "hw") {
-        std::cout << "This host program only support hw_emu and hw!" << std::endl;
+    if (target != "sw_emu" && target != "hw_emu" && target != "hw") {
+        std::cout << "This host program only support sw_emu, hw_emu and hw!" << std::endl;
         return 1;
     }
 

@@ -12,9 +12,9 @@ void spmv_result_drain(
     PACKED_VAL_T *packed_dense_result,      // out
     const unsigned row_part_id,             // in
     // const unsigned rows_per_c_in_partition, // in
-    hls::stream<VEC_AXIS_T> &from_SLR0,     // out
-    hls::stream<VEC_AXIS_T> &from_SLR1,     // out
-    hls::stream<VEC_AXIS_T> &from_SLR2      // out
+    hls::stream<VEC_AXIS_IF_T> &from_SLR0,     // out
+    hls::stream<VEC_AXIS_IF_T> &from_SLR1,     // out
+    hls::stream<VEC_AXIS_IF_T> &from_SLR2      // out
 ) {
     #pragma HLS interface m_axi port=packed_dense_result offset=slave bundle=spmv_vin
     #pragma HLS interface s_axilite port=packed_dense_result bundle=control
@@ -37,7 +37,7 @@ void spmv_result_drain(
     result_drain_main_loop:
     while (!exit) {
         #pragma HLS pipeline II=1
-        VEC_AXIS_T pkt;
+        VEC_AXIS_IF_T pkt;
         bool do_write = false;
         switch (current_input) {
             case 0:
