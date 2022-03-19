@@ -15,7 +15,7 @@ HOST_ARCH = x86
 
 CXX := g++
 
-CXXFLAGS += -Wall -std=c++11
+CXXFLAGS += -Wall -std=c++14
 
 CXXFLAGS += -I$(CNPY_INCLUDE)
 LDFLAGS += -L$(CNPY_LIB) -lcnpy
@@ -36,9 +36,14 @@ LDFLAGS += -lrt -lstdc++
 CXXFLAGS += -Wno-maybe-uninitialized
 CXXFLAGS += -Wno-uninitialized
 CXXFLAGS += -Wno-int-in-bool-context
+CXXFLAGS += -Wno-unknown-pragmas
+CXXFLAGS += -Wno-unused-function
 
 $(HW_DIR)/build_dir.hw_emu/spmv.xclbin:
 	cd $(HW_DIR); make -j5 build TARGET=hw_emu IMPL=$(IMPL)
+
+$(HW_DIR)/build_dir.sw_emu/spmv.xclbin:
+	cd $(HW_DIR); make -j5 build TARGET=sw_emu IMPL=$(IMPL)
 
 $(HW_DIR)/build_dir.hw/spmv.xclbin:
 	cd $(HW_DIR); make -j5 build TARGET=hw IMPL=$(IMPL)
@@ -58,6 +63,10 @@ benchmark: benchmark.cpp $(HW_DIR)/build_dir.hw/spmv.xclbin
 hw_emu: host $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 	cp $(HW_DIR)/emconfig.json .
 	./host hw_emu $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
+
+sw_emu: host $(HW_DIR)/build_dir.sw_emu/spmv.xclbin
+	cp $(HW_DIR)/emconfig.json .
+	./host sw_emu $(HW_DIR)/build_dir.sw_emu/spmv.xclbin
 
 hw: host $(HW_DIR)/build_dir.hw/spmv.xclbin
 	./host hw $(HW_DIR)/build_dir.hw/spmv.xclbin

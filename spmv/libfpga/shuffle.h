@@ -13,7 +13,7 @@
 // bool line_tracing_shuffle_core = false;
 // bool csim_abort_shuffle_core = false;
 // unsigned max_iter_limit_shuffle_core = 100;
-unsigned long long iter_cnt = 0;
+// unsigned long long iter_cnt = 0;
 #endif
 
 const unsigned ARBITER_LATENCY = 7;
@@ -34,7 +34,7 @@ void arbiter_1p(
     #pragma HLS pipeline II=1 enable_flush
     #pragma HLS latency min=ARBITER_LATENCY max=ARBITER_LATENCY
 
-    #pragma HLS array_partition variable=in_addr complete
+    #pragma HLS array_partition variable=in_resend complete
     #pragma HLS array_partition variable=xbar_sel complete
 
     // prioritized valid and addr
@@ -112,7 +112,7 @@ void arbiter_1p(
     #pragma HLS pipeline II=1 enable_flush
     #pragma HLS latency min=ARBITER_LATENCY max=ARBITER_LATENCY
 
-    #pragma HLS array_partition variable=in_addr complete
+    #pragma HLS array_partition variable=in_resend complete
     #pragma HLS array_partition variable=xbar_sel complete
 
     // prioritized valid and addr

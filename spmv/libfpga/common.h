@@ -96,6 +96,7 @@ struct VEC_PLD_T{
 #define VEC_PLD_EOS ((VEC_PLD_T){0,0,EOS})
 
 #ifndef __SYNTHESIS__
+namespace {
 std::string inst2str(INST_T inst) {
     switch (inst) {
         case SOD: return std::string("SOD");
@@ -130,6 +131,7 @@ std::ostream& operator<<(std::ostream& os, const VEC_PLD_T &p) {
         << "inst: "  << inst2str(p.inst) << '}';
     return os;
 }
+}
 #endif
 
 //-------------------------------------------------------------------------
@@ -140,12 +142,14 @@ std::ostream& operator<<(std::ostream& os, const VEC_PLD_T &p) {
 typedef struct {
     ap_uint<32 * (PACK_SIZE + 1)> data;
     ap_uint<2> user; // same as INST_T
-} VEC_AXIS_T;
+} VEC_AXIS_T; // only used for stream FIFOs
+typedef ap_axiu<32 * (PACK_SIZE + 1), 2, 0, 0> VEC_AXIS_IF_T; // AXI4-Stream interface of split kernels
 
 #define VEC_AXIS_PKT_IDX(p) (p.data(31,0))
 #define VEC_AXIS_VAL(p, i) (p.data(63 + 32 * i,32 + 32 * i))
 
 #ifndef __SYNTHESIS__
+namespace {
 std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
     os << '{' << "pktidx: " << VEC_AXIS_PKT_IDX(p) << '|';
     for (unsigned i = 0; i < PACK_SIZE; i++) {
@@ -153,6 +157,16 @@ std::ostream& operator<<(std::ostream& os, const VEC_AXIS_T &p) {
     }
     os << "user: "  << inst2str(p.user) << '}';
     return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const VEC_AXIS_IF_T &p) {
+    os << '{' << "pktidx: " << VEC_AXIS_PKT_IDX(p) << '|';
+    for (unsigned i = 0; i < PACK_SIZE; i++) {
+        os << "val: " << float(VEC_AXIS_VAL(p, i)) / (1 << FBITS) << '|';
+    }
+    os << "user: "  << inst2str(p.user) << '}';
+    return os;
+}
 }
 #endif
 

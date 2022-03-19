@@ -7,21 +7,24 @@
 // duplicate 1 AXIS stream to N
 template<unsigned N>
 void axis_duplicate(
-    hls::stream<VEC_AXIS_T> &in,
+    hls::stream<VEC_AXIS_IF_T> &in,
     hls::stream<VEC_AXIS_T> out[N]
 ) {
     bool exit = false;
     while (!exit) {
         #pragma HLS pipeline II=1
-        VEC_AXIS_T pkt = in.read();
-        VEC_AXIS_T pkt_reg = reg(reg(pkt));
+        VEC_AXIS_IF_T pkt_if = in.read();
+        VEC_AXIS_IF_T pkt_if_reg = reg(reg(pkt_if));
+        VEC_AXIS_T pkt_reg;
+        pkt_reg.data = pkt_if_reg.data;
+        pkt_reg.user = pkt_if_reg.user;
         VEC_AXIS_T pkt_replicas[N];
         for (unsigned k = 0; k < N; k++) {
             #pragma HLS unroll
             pkt_replicas[k] = reg(pkt_reg);
             out[k].write(pkt_replicas[k]);
         }
-        exit = (pkt.user == EOS);
+        exit = (pkt_if.user == EOS);
     }
 }
 
@@ -35,7 +38,7 @@ void axis_duplicate(
 template<unsigned N>
 void axis_merge(
     hls::stream<VEC_AXIS_T> in[N],
-    hls::stream<VEC_AXIS_T> &out
+    hls::stream<VEC_AXIS_IF_T> &out
 ) {
     unsigned i = 0;
     unsigned c = 0;
@@ -47,7 +50,10 @@ void axis_merge(
             VEC_AXIS_T pkt = in[i].read();
             VEC_AXIS_PKT_IDX(pkt) = c;
             if (pkt.user != EOS) {
-                out.write(pkt);
+                VEC_AXIS_IF_T pkt_if;
+                pkt_if.data = pkt.data;
+                pkt_if.user = pkt.user;
+                out.write(pkt_if);
 #ifdef AXIS_MERGE_LINE_TRACING
             std::cout << "axis merge write output from input " << i << std::endl
                         << "  " << pkt << std::endl;
@@ -64,7 +70,7 @@ void axis_merge(
     }
 
 
-    VEC_AXIS_T eos;
+    VEC_AXIS_IF_T eos;
     for (unsigned k = 0; k < PACK_SIZE; k++) {
         #pragma HLS unroll
         VEC_AXIS_VAL(eos, k) = 0;

@@ -14,8 +14,8 @@ void spmv_sk1(
     const SPMV_MAT_PKT_T *matrix_hbm_7,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_8,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_9,       // in
-    hls::stream<VEC_AXIS_T> &vec_in,          // in
-    hls::stream<VEC_AXIS_T> &res_out,         // out
+    hls::stream<VEC_AXIS_IF_T> &vec_in,          // in
+    hls::stream<VEC_AXIS_IF_T> &res_out,         // out
     const unsigned row_partition_idx,         // in
     const unsigned rows_per_c_in_partition,   // in
     const unsigned num_col_partitions,        // in
