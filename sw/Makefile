@@ -15,7 +15,7 @@ HOST_ARCH = x86
 
 CXX := g++
 
-CXXFLAGS += -Wall -Wunknown-pragmas -std=c++14
+CXXFLAGS += -Wall -std=c++14
 
 CXXFLAGS += -I$(CNPY_INCLUDE)
 LDFLAGS += -L$(CNPY_LIB) -lcnpy
@@ -36,6 +36,8 @@ LDFLAGS += -lrt -lstdc++
 CXXFLAGS += -Wno-maybe-uninitialized
 CXXFLAGS += -Wno-uninitialized
 CXXFLAGS += -Wno-int-in-bool-context
+CXXFLAGS += -Wno-unknown-pragmas
+CXXFLAGS += -Wno-unused-function
 
 $(HW_DIR)/build_dir.hw_emu/spmv.xclbin:
 	cd $(HW_DIR); make -j5 build TARGET=hw_emu IMPL=$(IMPL)
