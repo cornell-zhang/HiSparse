@@ -6,36 +6,20 @@ extern "C" {
 
 void spmspv(
 #if (SPMSPV_NUM_HBM_CHANNEL >= 1)
-    const SPMSPV_MAT_PKT_T *mat_0,  // in,  HBM[0]
-    const IDX_T *mat_indptr_0,      // in,  HBM[0]
-    const IDX_T *mat_partptr_0,     // in,  HBM[0]
+    SPMSPV_MAT_ARGS(0),             // in,  HBM[0]
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 2)
-    const SPMSPV_MAT_PKT_T *mat_1,  // in,  HBM[1]
-    const IDX_T *mat_indptr_1,      // in,  HBM[1]
-    const IDX_T *mat_partptr_1,     // in,  HBM[1]
+    SPMSPV_MAT_ARGS(1),             // in,  HBM[1]
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
-    const SPMSPV_MAT_PKT_T *mat_2,  // in,  HBM[2]
-    const IDX_T *mat_indptr_2,      // in,  HBM[2]
-    const IDX_T *mat_partptr_2,     // in,  HBM[2]
-    const SPMSPV_MAT_PKT_T *mat_3,  // in,  HBM[3]
-    const IDX_T *mat_indptr_3,      // in,  HBM[3]
-    const IDX_T *mat_partptr_3,     // in,  HBM[3]
+    SPMSPV_MAT_ARGS(2),             // in,  HBM[2]
+    SPMSPV_MAT_ARGS(3),             // in,  HBM[3]
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
-    const SPMSPV_MAT_PKT_T *mat_4,  // in,  HBM[4]
-    const IDX_T *mat_indptr_4,      // in,  HBM[4]
-    const IDX_T *mat_partptr_4,     // in,  HBM[4]
-    const SPMSPV_MAT_PKT_T *mat_5,  // in,  HBM[5]
-    const IDX_T *mat_indptr_5,      // in,  HBM[5]
-    const IDX_T *mat_partptr_5,     // in,  HBM[5]
-    const SPMSPV_MAT_PKT_T *mat_6,  // in,  HBM[6]
-    const IDX_T *mat_indptr_6,      // in,  HBM[6]
-    const IDX_T *mat_partptr_6,     // in,  HBM[6]
-    const SPMSPV_MAT_PKT_T *mat_7,  // in,  HBM[7]
-    const IDX_T *mat_indptr_7,      // in,  HBM[7]
-    const IDX_T *mat_partptr_7,     // in,  HBM[7]
+    SPMSPV_MAT_ARGS(4),             // in,  HBM[4]
+    SPMSPV_MAT_ARGS(5),             // in,  HBM[5]
+    SPMSPV_MAT_ARGS(6),             // in,  HBM[6]
+    SPMSPV_MAT_ARGS(7),             // in,  HBM[7]
 #endif
     IDX_VAL_T *vector,              // inout, HBM[20]
     IDX_VAL_T *result,              // out,   HBM[22]
@@ -70,57 +54,57 @@ void spmspv(
 
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
 
-      #pragma HLS interface m_axi port=mat_2         offset=slave bundle=spmspv_gmem0_2
-      #pragma HLS interface m_axi port=mat_indptr_2  offset=slave bundle=spmspv_gmem1_2
-      #pragma HLS interface m_axi port=mat_partptr_2 offset=slave bundle=spmspv_gmem2_2
+    #pragma HLS interface m_axi port=mat_2         offset=slave bundle=spmspv_gmem0_2
+    #pragma HLS interface m_axi port=mat_indptr_2  offset=slave bundle=spmspv_gmem1_2
+    #pragma HLS interface m_axi port=mat_partptr_2 offset=slave bundle=spmspv_gmem2_2
 
-      #pragma HLS interface s_axilite port=mat_2         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_2  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_2 bundle=control
+    #pragma HLS interface s_axilite port=mat_2         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_2  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_2 bundle=control
 
-      #pragma HLS interface m_axi port=mat_3         offset=slave bundle=spmspv_gmem0_3
-      #pragma HLS interface m_axi port=mat_indptr_3  offset=slave bundle=spmspv_gmem1_3
-      #pragma HLS interface m_axi port=mat_partptr_3 offset=slave bundle=spmspv_gmem2_3
+    #pragma HLS interface m_axi port=mat_3         offset=slave bundle=spmspv_gmem0_3
+    #pragma HLS interface m_axi port=mat_indptr_3  offset=slave bundle=spmspv_gmem1_3
+    #pragma HLS interface m_axi port=mat_partptr_3 offset=slave bundle=spmspv_gmem2_3
 
-      #pragma HLS interface s_axilite port=mat_3         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_3  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_3 bundle=control
+    #pragma HLS interface s_axilite port=mat_3         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_3  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_3 bundle=control
 
 #endif
 
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
 
-      #pragma HLS interface m_axi port=mat_4         offset=slave bundle=spmspv_gmem0_4
-      #pragma HLS interface m_axi port=mat_indptr_4  offset=slave bundle=spmspv_gmem1_4
-      #pragma HLS interface m_axi port=mat_partptr_4 offset=slave bundle=spmspv_gmem2_4
+    #pragma HLS interface m_axi port=mat_4         offset=slave bundle=spmspv_gmem0_4
+    #pragma HLS interface m_axi port=mat_indptr_4  offset=slave bundle=spmspv_gmem1_4
+    #pragma HLS interface m_axi port=mat_partptr_4 offset=slave bundle=spmspv_gmem2_4
 
-      #pragma HLS interface s_axilite port=mat_4         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_4  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_4 bundle=control
+    #pragma HLS interface s_axilite port=mat_4         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_4  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_4 bundle=control
 
-      #pragma HLS interface m_axi port=mat_5         offset=slave bundle=spmspv_gmem0_5
-      #pragma HLS interface m_axi port=mat_indptr_5  offset=slave bundle=spmspv_gmem1_5
-      #pragma HLS interface m_axi port=mat_partptr_5 offset=slave bundle=spmspv_gmem2_5
+    #pragma HLS interface m_axi port=mat_5         offset=slave bundle=spmspv_gmem0_5
+    #pragma HLS interface m_axi port=mat_indptr_5  offset=slave bundle=spmspv_gmem1_5
+    #pragma HLS interface m_axi port=mat_partptr_5 offset=slave bundle=spmspv_gmem2_5
 
-      #pragma HLS interface s_axilite port=mat_5         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_5  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_5 bundle=control
+    #pragma HLS interface s_axilite port=mat_5         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_5  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_5 bundle=control
 
-      #pragma HLS interface m_axi port=mat_6         offset=slave bundle=spmspv_gmem0_6
-      #pragma HLS interface m_axi port=mat_indptr_6  offset=slave bundle=spmspv_gmem1_6
-      #pragma HLS interface m_axi port=mat_partptr_6 offset=slave bundle=spmspv_gmem2_6
+    #pragma HLS interface m_axi port=mat_6         offset=slave bundle=spmspv_gmem0_6
+    #pragma HLS interface m_axi port=mat_indptr_6  offset=slave bundle=spmspv_gmem1_6
+    #pragma HLS interface m_axi port=mat_partptr_6 offset=slave bundle=spmspv_gmem2_6
 
-      #pragma HLS interface s_axilite port=mat_6         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_6  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_6 bundle=control
+    #pragma HLS interface s_axilite port=mat_6         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_6  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_6 bundle=control
 
-      #pragma HLS interface m_axi port=mat_7         offset=slave bundle=spmspv_gmem0_7
-      #pragma HLS interface m_axi port=mat_indptr_7  offset=slave bundle=spmspv_gmem1_7
-      #pragma HLS interface m_axi port=mat_partptr_7 offset=slave bundle=spmspv_gmem2_7
+    #pragma HLS interface m_axi port=mat_7         offset=slave bundle=spmspv_gmem0_7
+    #pragma HLS interface m_axi port=mat_indptr_7  offset=slave bundle=spmspv_gmem1_7
+    #pragma HLS interface m_axi port=mat_partptr_7 offset=slave bundle=spmspv_gmem2_7
 
-      #pragma HLS interface s_axilite port=mat_7         bundle=control
-      #pragma HLS interface s_axilite port=mat_indptr_7  bundle=control
-      #pragma HLS interface s_axilite port=mat_partptr_7 bundle=control
+    #pragma HLS interface s_axilite port=mat_7         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_7  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_7 bundle=control
 
 #endif
 
@@ -175,38 +159,25 @@ void spmspv(
             std::cout << "          row id base: " << mat_row_id_base << std::endl << std::flush;
         }
         #endif
+
+#define SPMSPV_MAT_ON_HBM(x) mat_##x, mat_indptr_##x, mat_partptr_##x
+
         spmspv_core(
 #if (SPMSPV_NUM_HBM_CHANNEL >= 1)
-            mat_0,
-            mat_indptr_0,
-            mat_partptr_0,
+            SPMSPV_MAT_ON_HBM(0),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 2)
-            mat_1,
-            mat_indptr_1,
-            mat_partptr_1,
+            SPMSPV_MAT_ON_HBM(1),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
-            mat_2,
-            mat_indptr_2,
-            mat_partptr_2,
-            mat_3,
-            mat_indptr_3,
-            mat_partptr_3,
+            SPMSPV_MAT_ON_HBM(2),
+            SPMSPV_MAT_ON_HBM(3),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
-            mat_4,
-            mat_indptr_4,
-            mat_partptr_4,
-            mat_5,
-            mat_indptr_5,
-            mat_partptr_5,
-            mat_6,
-            mat_indptr_6,
-            mat_partptr_6,
-            mat_7,
-            mat_indptr_7,
-            mat_partptr_7,
+            SPMSPV_MAT_ON_HBM(4),
+            SPMSPV_MAT_ON_HBM(5),
+            SPMSPV_MAT_ON_HBM(6),
+            SPMSPV_MAT_ON_HBM(7),
 #endif
             vector,
             result,

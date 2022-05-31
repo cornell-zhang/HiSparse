@@ -265,39 +265,29 @@ static void write_back_results (
     Nnz = res_idx;
 }
 
+// abbreviation for matrix arguments, `x` is the index of HBM channel
+#define SPMSPV_MAT_ARGS(x) \
+const SPMSPV_MAT_PKT_T *mat_##x, \
+const IDX_T *mat_indptr_##x, \
+const IDX_T *mat_partptr_##x
+
 // vec loader -> mat loader -> stream merger -> shuffle -> PE -> write back
 static void spmspv_core(
 #if (SPMSPV_NUM_HBM_CHANNEL >= 1)
-    const SPMSPV_MAT_PKT_T *mat_0,
-    const IDX_T *mat_indptr_0,
-    const IDX_T *mat_partptr_0,
+    SPMSPV_MAT_ARGS(0),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 2)
-    const SPMSPV_MAT_PKT_T *mat_1,
-    const IDX_T *mat_indptr_1,
-    const IDX_T *mat_partptr_1,
+    SPMSPV_MAT_ARGS(1),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
-    const SPMSPV_MAT_PKT_T *mat_2,
-    const IDX_T *mat_indptr_2,
-    const IDX_T *mat_partptr_2,
-    const SPMSPV_MAT_PKT_T *mat_3,
-    const IDX_T *mat_indptr_3,
-    const IDX_T *mat_partptr_3,
+    SPMSPV_MAT_ARGS(2),
+    SPMSPV_MAT_ARGS(3),
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
-    const SPMSPV_MAT_PKT_T *mat_4,
-    const IDX_T *mat_indptr_4,
-    const IDX_T *mat_partptr_4,
-    const SPMSPV_MAT_PKT_T *mat_5,
-    const IDX_T *mat_indptr_5,
-    const IDX_T *mat_partptr_5,
-    const SPMSPV_MAT_PKT_T *mat_6,
-    const IDX_T *mat_indptr_6,
-    const IDX_T *mat_partptr_6,
-    const SPMSPV_MAT_PKT_T *mat_7,
-    const IDX_T *mat_indptr_7,
-    const IDX_T *mat_partptr_7,
+    SPMSPV_MAT_ARGS(4),
+    SPMSPV_MAT_ARGS(5),
+    SPMSPV_MAT_ARGS(6),
+    SPMSPV_MAT_ARGS(7),
 #endif
     const IDX_VAL_T *vector,
     // const VAL_T *mask,
@@ -341,101 +331,34 @@ static void spmspv_core(
         VL_to_ML_stream
     );
 
+#define LOAD_MAT_FROM_HBM(x) \
+load_matrix_from_gmem( \
+    mat_##x, \
+    mat_indptr_##x, \
+    mat_partptr_##x, \
+    mat_indptr_base_each_channel[x], \
+    mat_row_id_base, \
+    part_id, \
+    VL_to_ML_stream[x], \
+    ML_to_MG_inst[x], \
+    ML_to_MG_stream[x] \
+)
+
 #if (SPMSPV_NUM_HBM_CHANNEL >= 1)
-    load_matrix_from_gmem(
-        mat_0,
-        mat_indptr_0,
-        mat_partptr_0,
-        mat_indptr_base_each_channel[0],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[0],
-        ML_to_MG_inst[0],
-        ML_to_MG_stream[0]
-    );
+    LOAD_MAT_FROM_HBM(0);
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 2)
-    load_matrix_from_gmem(
-        mat_1,
-        mat_indptr_1,
-        mat_partptr_1,
-        mat_indptr_base_each_channel[1],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[1],
-        ML_to_MG_inst[1],
-        ML_to_MG_stream[1]
-    );
+    LOAD_MAT_FROM_HBM(1);
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
-    load_matrix_from_gmem(
-        mat_2,
-        mat_indptr_2,
-        mat_partptr_2,
-        mat_indptr_base_each_channel[2],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[2],
-        ML_to_MG_inst[2],
-        ML_to_MG_stream[2]
-    );
-    load_matrix_from_gmem(
-        mat_3,
-        mat_indptr_3,
-        mat_partptr_3,
-        mat_indptr_base_each_channel[3],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[3],
-        ML_to_MG_inst[3],
-        ML_to_MG_stream[3]
-    );
+    LOAD_MAT_FROM_HBM(2);
+    LOAD_MAT_FROM_HBM(3);
 #endif
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
-    load_matrix_from_gmem(
-        mat_4,
-        mat_indptr_4,
-        mat_partptr_4,
-        mat_indptr_base_each_channel[4],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[4],
-        ML_to_MG_inst[4],
-        ML_to_MG_stream[4]
-    );
-    load_matrix_from_gmem(
-        mat_5,
-        mat_indptr_5,
-        mat_partptr_5,
-        mat_indptr_base_each_channel[5],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[5],
-        ML_to_MG_inst[5],
-        ML_to_MG_stream[5]
-    );
-    load_matrix_from_gmem(
-        mat_6,
-        mat_indptr_6,
-        mat_partptr_6,
-        mat_indptr_base_each_channel[6],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[6],
-        ML_to_MG_inst[6],
-        ML_to_MG_stream[6]
-    );
-    load_matrix_from_gmem(
-        mat_7,
-        mat_indptr_7,
-        mat_partptr_7,
-        mat_indptr_base_each_channel[7],
-        mat_row_id_base,
-        part_id,
-        VL_to_ML_stream[7],
-        ML_to_MG_inst[7],
-        ML_to_MG_stream[7]
-    );
+    LOAD_MAT_FROM_HBM(4);
+    LOAD_MAT_FROM_HBM(5);
+    LOAD_MAT_FROM_HBM(6);
+    LOAD_MAT_FROM_HBM(7);
 #endif
     #ifndef __SYNTHESIS__
     if (line_tracing_spmspv) {
@@ -453,46 +376,20 @@ static void spmspv_core(
     }
     #endif
 
-    pe_bram_sparse<0, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[0],
-        PE_to_WB_stream[0],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<1, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[1],
-        PE_to_WB_stream[1],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<2, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[2],
-        PE_to_WB_stream[2],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<3, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[3],
-        PE_to_WB_stream[3],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<4, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[4],
-        PE_to_WB_stream[4],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<5, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[5],
-        PE_to_WB_stream[5],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<6, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[6],
-        PE_to_WB_stream[6],
-        used_buf_len_per_pe
-    );
-    pe_bram_sparse<7, SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>(
-        SF_to_PE_stream[7],
-        PE_to_WB_stream[7],
-        used_buf_len_per_pe
-    );
+#define PE_SPARSE(x) \
+pe_bram_sparse<(x), SPMSPV_OUT_BUF_LEN / PACK_SIZE, PACK_SIZE>( \
+    SF_to_PE_stream[x], \
+    PE_to_WB_stream[x], \
+    used_buf_len_per_pe \
+)
+    PE_SPARSE(0);
+    PE_SPARSE(1);
+    PE_SPARSE(2);
+    PE_SPARSE(3);
+    PE_SPARSE(4);
+    PE_SPARSE(5);
+    PE_SPARSE(6);
+    PE_SPARSE(7);
 
     #ifndef __SYNTHESIS__
     if (line_tracing_spmspv) {

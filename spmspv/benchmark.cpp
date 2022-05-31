@@ -159,16 +159,18 @@ struct cl_runtime {
 };
 
 struct benchmark_result {
+    std::string benchmark_name;
     double preprocess_time_s;
-    double spmv_time_ms;
+    double spmspv_time_ms;
     double throughput_GBPS;
     double throughput_GOPS;
 };
 
 std::ostream& operator<<(std::ostream& os, const benchmark_result &p) {
     os << '{'
+        << "Benchmark: " << p.benchmark_name << " | "
         << "Preprocessing: " << p.preprocess_time_s << " s | "
-        << "SpMSpV: " << p.spmv_time_ms << " ms | "
+        << "SpMSpV: " << p.spmspv_time_ms << " ms | "
         << p.throughput_GBPS << " GBPS | "
         << p.throughput_GOPS << " GOPS }";
     return os;
@@ -188,12 +190,14 @@ using spmspv::io::csc_matrix_convert_from_float;
 // benchmark function
 //---------------------------------------------------------------
 benchmark_result spmspv_benchmark (
+    std::string name,
     cl_runtime &runtime,
     CSCMatrix<float> &csc_matrix_float,
     float vector_sparsity
 ) {
     using namespace std::chrono;
     benchmark_result record;
+    record.benchmark_name = name;
 
     //--------------------------------------------------------------------
     // load and format the matrix
@@ -348,7 +352,7 @@ benchmark_result spmspv_benchmark (
     //--------------------------------------------------------------------
     // set kernel arguments that won't change across row iterations
     std::cout << "INFO : Invoking kernel:";
-    std::cout << "  row_partitions: " << num_row_partitions << std::endl;
+    std::cout << " row_partitions: " << num_row_partitions << std::endl;
 
     for (size_t c = 0; c < SPMSPV_NUM_HBM_CHANNEL; c++) {
         OCL_CHECK(err, err = runtime.spmspv.setArg(0 + 3*c, channel_packets_buf[c]));
@@ -378,9 +382,9 @@ benchmark_result spmspv_benchmark (
     }
     std::cout << "INFO : SpMSpV Kernel complete "<< NUM_RUNS << " runs!" << std::endl;
 
-    record.spmv_time_ms = total_time / NUM_RUNS;
-    record.throughput_GBPS = gbs / (record.spmv_time_ms / 1000);
-    record.throughput_GOPS = Mops / record.spmv_time_ms;
+    record.spmspv_time_ms = total_time / NUM_RUNS;
+    record.throughput_GBPS = gbs / (record.spmspv_time_ms / 1000);
+    record.throughput_GOPS = Mops / record.spmspv_time_ms;
 
     //--------------------------------------------------------------------
     // compute reference
@@ -402,7 +406,7 @@ benchmark_result spmspv_benchmark (
     std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
 
     verify(ref_result, upk_result); // TODO: record verification
-    std::cout << "INFO: Result verification complete!" << std::endl;
+    std::cout << "INFO : Result verification complete!" << std::endl;
 
     return record;
 }
@@ -482,7 +486,7 @@ int main (int argc, char** argv) {
     for (const auto &x : test_cases ) {
       std::cout << "------ Running benchmark on " << x.first << std::endl;
       LOAD_DATASET("../datasets/" + x.second);
-      std::cout << spmspv_benchmark(runtime, mat_f, 0.5) << std::endl;
+      std::cout << spmspv_benchmark(x.first, runtime, mat_f, 0.5) << std::endl;
       std::cout << "===== Benchmark Finished =====" << std::endl;
     }
 
