@@ -84,6 +84,12 @@ CSRMatrix<data_type> csr_matrix_convert_from_float(CSRMatrix<float> const &in) {
 }
 
 
+}  // namespace io
+}  // namespace spmv
+
+namespace spmspv {
+namespace io {
+
 //--------------------------------------------------
 // Compressed Sparse Colunm (CSC) format support
 //--------------------------------------------------
@@ -106,7 +112,7 @@ struct CSCMatrix {
 
 // Convert csr to csc.
 template<typename data_type>
-CSCMatrix<data_type> csr2csc(CSRMatrix<data_type> const &csr_matrix) {
+CSCMatrix<data_type> csr2csc(spmv::io::CSRMatrix<data_type> const &csr_matrix) {
     CSCMatrix<data_type> csc_matrix;
     csc_matrix.num_rows = csr_matrix.num_rows;
     csc_matrix.num_cols = csr_matrix.num_cols;

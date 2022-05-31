@@ -6,6 +6,8 @@
 #include <numeric>
 #include <algorithm>
 
+#include "xcl2.hpp"  // use aligned_allocator
+
 #include "data_loader.h"
 
 namespace spmv {
@@ -546,5 +548,221 @@ CPSRMatrix<packed_val_t, packed_idx_t, pack_size> csr2cpsr(CSRMatrix<DataT> cons
 
 }  // namespace io
 }  // namespace spmv
+
+namespace spmspv {
+namespace io {
+
+//----------------------------
+// Variants of CSC for SpMSpV
+//----------------------------
+
+// Fromatted CSC matrix
+// We do partitioning, padding, and packing when formatting the standard CSC matrix
+template<typename MatrixPacketT>
+struct FormattedCSCMatrix {
+    /*! \brief The number of columns */
+    uint32_t num_cols;
+    /*! \brief The number of partitions along the row dimension */
+    uint32_t num_row_partitions;
+
+    std::vector<MatrixPacketT> formatted_adj_packet;
+    std::vector<uint32_t> formatted_adj_indptr;
+    std::vector<uint32_t> formatted_adj_partptr;
+
+    /*!
+     * \brief get formatted packet
+     */
+    std::vector<MatrixPacketT, aligned_allocator<MatrixPacketT>> get_formatted_packet() {
+        std::vector<MatrixPacketT, aligned_allocator<MatrixPacketT>> channel_packets;
+        size_t size = this->formatted_adj_packet.size();
+        channel_packets.resize(size);
+        for (size_t i = 0; i < size; i++) {
+            channel_packets[i] = this->formatted_adj_packet[i];
+        }
+        return channel_packets;
+    }
+
+    /*!
+     * \brief get formatted indptr
+     */
+    std::vector<uint32_t, aligned_allocator<uint32_t>> get_formatted_indptr() {
+        std::vector<uint32_t, aligned_allocator<uint32_t>> channel_indptr;
+        channel_indptr.resize((this->num_cols + 1) * this->num_row_partitions);
+        for (size_t i = 0; i < (this->num_cols + 1) * this->num_row_partitions; i++) {
+            channel_indptr[i] = this->formatted_adj_indptr[i];
+        }
+        return channel_indptr;
+    }
+
+    /*!
+     * \brief get formatted partptr
+     */
+    std::vector<uint32_t, aligned_allocator<uint32_t>> get_formatted_partptr() {
+        std::vector<uint32_t, aligned_allocator<uint32_t>> channel_partptr;
+        channel_partptr.resize(this->num_row_partitions);
+        for (size_t i = 0; i < this->num_row_partitions; i++) {
+            channel_partptr[i] = this->formatted_adj_partptr[i];
+        }
+        return channel_partptr;
+    }
+};
+
+
+/*!
+ * \brief Format a standard CSC matrix.
+ *
+ * \tparam DataT The data type of non-zero values of the sparse matrix.
+ * \tparam MatrixPacketT The packet type of the formatted matrix.
+ *
+ * \param csc_matrix The input matrix in CSC format.
+ * \param pack_size The number of elements packed in one packet.
+ * \param out_buf_len The length of the output buffer. Must divide (pack_size * 2).
+ *
+ * \return The output matrix in packed CSC format.
+ */
+template<typename DataT, typename MatrixPacketT>
+FormattedCSCMatrix<MatrixPacketT> formatCSC(CSCMatrix<DataT> const &csc_matrix,
+                                            // semiring is always arithmetic in HiSparse
+                                            uint32_t pack_size,
+                                            uint32_t out_buf_len) {
+    if (out_buf_len % (pack_size * 2) != 0) {
+        std::cout << "ERROR: [formatCSC] The out_buf_len should divide (pack_size * 2) !"
+                  << "  Aborting..." <<std::endl;
+        exit(EXIT_FAILURE);
+    }
+    FormattedCSCMatrix<MatrixPacketT> formatted_matrix;
+    formatted_matrix.num_cols = csc_matrix.num_cols;
+    formatted_matrix.num_row_partitions = (csc_matrix.num_rows + out_buf_len - 1) / out_buf_len;
+    formatted_matrix.formatted_adj_packet.clear();
+    formatted_matrix.formatted_adj_indptr.clear();
+    formatted_matrix.formatted_adj_partptr.clear();
+
+    std::vector<std::vector<uint32_t>> tile_idxptr_buf(formatted_matrix.num_row_partitions);
+    for (size_t t = 0; t < formatted_matrix.num_row_partitions; t++) {
+        tile_idxptr_buf[t].push_back(0);
+    }
+    formatted_matrix.formatted_adj_partptr.push_back(0);
+
+    std::vector<std::vector<DataT>> tile_val_buf(formatted_matrix.num_row_partitions);
+    std::vector<std::vector<uint32_t>> tile_idx_buf(formatted_matrix.num_row_partitions);
+    std::vector<std::vector<MatrixPacketT>> tile_packet_buf(formatted_matrix.num_row_partitions);
+    std::vector<unsigned> tile_nnz_cnt(formatted_matrix.num_row_partitions, 0);
+    std::vector<unsigned> tile_pkt_cnt(formatted_matrix.num_row_partitions, 0);
+
+    // loop over all columns
+    for (unsigned i = 0; i < csc_matrix.num_cols; i++) {
+
+        // slice out one column
+        uint32_t start = csc_matrix.adj_indptr[i];
+        uint32_t end = csc_matrix.adj_indptr[i+1];
+        uint32_t col_len = end - start;
+
+        // clear temporary buffer
+        for (size_t t = 0; t < formatted_matrix.num_row_partitions; t++) {
+            tile_val_buf[t].clear();
+            tile_idx_buf[t].clear();
+            tile_nnz_cnt[t] = 0;
+        }
+
+        // loop over all rows and distribute to the corresbonding tile
+        for (unsigned j = 0; j < col_len; j++) {
+            unsigned dest_tile = csc_matrix.adj_indices[start + j] / out_buf_len;
+            tile_val_buf[dest_tile].push_back(csc_matrix.adj_data[start + j]);
+            tile_idx_buf[dest_tile].push_back(csc_matrix.adj_indices[start + j]);
+            tile_nnz_cnt[dest_tile]++;
+        }
+
+        // column padding and data packing for every tile
+        for (unsigned t = 0; t < formatted_matrix.num_row_partitions; t++) {
+            // padding with zero
+            unsigned num_packets = (tile_nnz_cnt[t] + pack_size - 1) / pack_size;
+            unsigned num_padding_zero = num_packets * pack_size - tile_nnz_cnt[t];
+            for (size_t z = 0; z < num_padding_zero; z++) {
+                tile_val_buf[t].push_back(0);
+                tile_idx_buf[t].push_back(0);
+            }
+            tile_pkt_cnt[t] += num_packets;
+
+            // data packing
+            for (unsigned p = 0; p < num_packets; p++) {
+                MatrixPacketT val_idx_packet;
+                for (unsigned k = 0; k < pack_size; k++) {
+                    val_idx_packet.vals[k] = tile_val_buf[t][k + p * pack_size];
+                    val_idx_packet.indices[k] = tile_idx_buf[t][k + p * pack_size];
+                }
+                tile_packet_buf[t].push_back(val_idx_packet);
+            }
+        }
+
+        // append tile idxptr
+        for (size_t t = 0; t < formatted_matrix.num_row_partitions; t++) {
+            tile_idxptr_buf[t].push_back(tile_pkt_cnt[t]);
+        }
+    }
+
+    // concatenate all accumulative buffers into final output and create tileptr
+    for (size_t t = 0; t < formatted_matrix.num_row_partitions; t++) {
+        formatted_matrix.formatted_adj_packet.insert(formatted_matrix.formatted_adj_packet.end(),
+                                                     tile_packet_buf[t].begin(),
+                                                     tile_packet_buf[t].end());
+        formatted_matrix.formatted_adj_indptr.insert(formatted_matrix.formatted_adj_indptr.end(),
+                                                     tile_idxptr_buf[t].begin(),
+                                                     tile_idxptr_buf[t].end());
+        formatted_matrix.formatted_adj_partptr.push_back(tile_pkt_cnt[t] + formatted_matrix.formatted_adj_partptr.back());
+    }
+    // std::cout << "Total #of Packets : " << formatted_matrix.formatted_adj_packet.size()  << std::endl;
+    // std::cout << "Total #of Tiles   : " << formatted_matrix.num_row_partitions           << std::endl;
+    // std::cout << "Size of idxptr    : " << formatted_matrix.formatted_adj_indptr.size()  << std::endl;
+    // std::cout << "Size of tileptr   : " << formatted_matrix.formatted_adj_partptr.size() << std::endl;
+    return formatted_matrix;
+}
+
+
+/*!
+ * \brief Split a CSC matrix along the column dimension in a cyclic manner.
+ *
+ * \tparam DataT The data type of non-zero values of the sparse matrix.
+ *
+ * \param in The input matrix in CSC format.
+ * \param factor The split factor.
+ *
+ * \return A vector of CSC matrices.
+ */
+template<typename DataT>
+std::vector<CSCMatrix<DataT> > ColumnCyclicSplitCSC(CSCMatrix<DataT> const &in, uint32_t factor) {
+    std::vector<uint32_t> nnz_each_col(in.num_cols);
+    std::vector<uint32_t> nnz_each_split(factor, 0);
+    for (uint32_t i = 0; i < in.num_cols; i++) {
+        nnz_each_col[i] = in.adj_indptr[i + 1] - in.adj_indptr[i];
+        nnz_each_split[i%factor] += nnz_each_col[i];
+    }
+
+    std::vector<CSCMatrix<DataT> > out;
+    for (uint32_t f = 0; f < factor; f++) {
+        CSCMatrix<DataT> csc_matrix;
+        csc_matrix.num_rows = in.num_rows;
+        csc_matrix.num_cols = (in.num_cols - 1 - f)/factor + 1;
+        csc_matrix.adj_data = std::vector<DataT>(nnz_each_split[f]);
+        csc_matrix.adj_indices = std::vector<uint32_t>(nnz_each_split[f]);
+        csc_matrix.adj_indptr = std::vector<uint32_t>(csc_matrix.num_cols + 1);
+        csc_matrix.adj_indptr[0] = 0;
+        for (uint32_t i = f; i < in.num_cols; i+=factor) {
+            uint32_t start_in = in.adj_indptr[i];
+            uint32_t start_csc_matrix = csc_matrix.adj_indptr[i/factor];
+            for (uint32_t j = 0; j < nnz_each_col[i]; j++) {
+                csc_matrix.adj_data[start_csc_matrix + j] = in.adj_data[start_in + j];
+                csc_matrix.adj_indices[start_csc_matrix + j] = in.adj_indices[start_in + j];
+            }
+            csc_matrix.adj_indptr[i/factor + 1] = csc_matrix.adj_indptr[i/factor] + nnz_each_col[i];
+        }
+        out.push_back(csc_matrix);
+    }
+
+    return out;
+}
+
+
+} // namespace io
+} // namespace spmspv
 
 #endif  // GRAPHLILY_IO_DATA_FORMATTER_H_
