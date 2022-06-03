@@ -21,8 +21,12 @@ void spmspv(
     SPMSPV_MAT_ARGS(6),             // in,  HBM[6]
     SPMSPV_MAT_ARGS(7),             // in,  HBM[7]
 #endif
-    IDX_VAL_T *vector,              // inout, HBM[20]
-    IDX_VAL_T *result,              // out,   HBM[22]
+#if (SPMSPV_NUM_HBM_CHANNEL >= 10)
+    SPMSPV_MAT_ARGS(8),             // in,  HBM[8]
+    SPMSPV_MAT_ARGS(9),             // in,  HBM[9]
+#endif
+    IDX_VAL_T *vector,              // inout, HBM[30]
+    IDX_VAL_T *result,              // out,   HBM[31]
     IDX_T num_rows,                 // in
     IDX_T num_cols                  // in
 ) {
@@ -108,6 +112,26 @@ void spmspv(
 
 #endif
 
+#if (SPMSPV_NUM_HBM_CHANNEL >= 10)
+
+    #pragma HLS interface m_axi port=mat_8         offset=slave bundle=spmspv_gmem0_8
+    #pragma HLS interface m_axi port=mat_indptr_8  offset=slave bundle=spmspv_gmem1_8
+    #pragma HLS interface m_axi port=mat_partptr_8 offset=slave bundle=spmspv_gmem2_8
+
+    #pragma HLS interface s_axilite port=mat_8         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_8  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_8 bundle=control
+
+    #pragma HLS interface m_axi port=mat_9         offset=slave bundle=spmspv_gmem0_9
+    #pragma HLS interface m_axi port=mat_indptr_9  offset=slave bundle=spmspv_gmem1_9
+    #pragma HLS interface m_axi port=mat_partptr_9 offset=slave bundle=spmspv_gmem2_9
+
+    #pragma HLS interface s_axilite port=mat_9         bundle=control
+    #pragma HLS interface s_axilite port=mat_indptr_9  bundle=control
+    #pragma HLS interface s_axilite port=mat_partptr_9 bundle=control
+
+#endif
+
     #pragma HLS interface m_axi port=vector         offset=slave bundle=spmspv_gmem_vec
     #pragma HLS interface m_axi port=result         offset=slave bundle=spmspv_gmem_out
 
@@ -178,6 +202,10 @@ void spmspv(
             SPMSPV_MAT_ON_HBM(5),
             SPMSPV_MAT_ON_HBM(6),
             SPMSPV_MAT_ON_HBM(7),
+#endif
+#if (SPMSPV_NUM_HBM_CHANNEL >= 10)
+            SPMSPV_MAT_ON_HBM(8),
+            SPMSPV_MAT_ON_HBM(9),
 #endif
             vector,
             result,

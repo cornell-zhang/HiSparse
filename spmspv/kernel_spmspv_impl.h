@@ -289,6 +289,10 @@ static void spmspv_core(
     SPMSPV_MAT_ARGS(6),
     SPMSPV_MAT_ARGS(7),
 #endif
+#if (SPMSPV_NUM_HBM_CHANNEL >= 10)
+    SPMSPV_MAT_ARGS(8),
+    SPMSPV_MAT_ARGS(9),
+#endif
     const IDX_VAL_T *vector,
     // const VAL_T *mask,
     IDX_VAL_T *result_out,
@@ -359,6 +363,10 @@ load_matrix_from_gmem( \
     LOAD_MAT_FROM_HBM(5);
     LOAD_MAT_FROM_HBM(6);
     LOAD_MAT_FROM_HBM(7);
+#endif
+#if (SPMSPV_NUM_HBM_CHANNEL >= 10)
+    LOAD_MAT_FROM_HBM(8);
+    LOAD_MAT_FROM_HBM(9);
 #endif
     #ifndef __SYNTHESIS__
     if (line_tracing_spmspv) {

@@ -4,9 +4,10 @@
 #include "data_formatter.h"
 
 #include <iostream>
-#include <iomanip>
-#include <assert.h>
 #include <string>
+#include <thread>
+#include <vector>
+#include <fstream>
 
 #include "xcl2.hpp"
 
@@ -41,17 +42,28 @@ using aligned_sparse_float_vec_t = std::vector<IDX_FLOAT_T>;
 using packet_t = struct {IDX_T indices[PACK_SIZE]; VAL_T vals[PACK_SIZE];};
 using aligned_packet_t = aligned_vector<packet_t>;
 
+using spmv::io::load_csr_matrix_from_float_npz;
+
+using spmspv::io::csr2csc;
+using spmspv::io::CSCMatrix;
+using spmspv::io::FormattedCSCMatrix;
+using spmspv::io::ColumnCyclicSplitCSC;
+using spmspv::io::formatCSC;
+using spmspv::io::csc_matrix_convert_from_float;
+
 //--------------------------------------------------------------------------------------------------
 // reference and verify utils
 //--------------------------------------------------------------------------------------------------
 
 void compute_ref(
-    spmspv::io::CSCMatrix<float> &mat,
+    CSCMatrix<float> &mat,
     aligned_sparse_float_vec_t &vector,
-    aligned_dense_float_vec_t &ref_result
+    aligned_dense_float_vec_t &ref_result,
+    uint32_t &involved_Nnz
 ) {
     // measure dimensions
     unsigned vec_nnz_total = vector[0].index;
+    involved_Nnz = 0;
 
     // create result container
     ref_result.resize(mat.num_rows);
@@ -68,6 +80,9 @@ void compute_ref(
         // slice out the current column out of the active columns
         unsigned col_start = mat.adj_indptr[current_col_id];
         unsigned col_end = mat.adj_indptr[current_col_id + 1];
+
+        // measure the involved Nnz in one SpMSpV run (only measure the matrix)
+        involved_Nnz += col_end - col_start;
 
         // loop over all nnzs in the current column
         for (unsigned mat_element_id = col_start; mat_element_id < col_end; mat_element_id++) {
@@ -160,297 +175,379 @@ struct cl_runtime {
 
 struct benchmark_result {
     std::string benchmark_name;
+    float spmspv_sparsity;
     double preprocess_time_s;
     double spmspv_time_ms;
     double throughput_GBPS;
     double throughput_GOPS;
+    bool verified;
 };
 
+template <typename T>
+inline std::string fmt_key_val(std::string key, T val) {
+    std::stringstream ss;
+    ss << "\"" << key << "\": \"" << val << "\"";
+    return ss.str();
+}
+
+// print the benchmark result in JSON format
 std::ostream& operator<<(std::ostream& os, const benchmark_result &p) {
-    os << '{'
-        << "Benchmark: " << p.benchmark_name << " | "
-        << "Preprocessing: " << p.preprocess_time_s << " s | "
-        << "SpMSpV: " << p.spmspv_time_ms << " ms | "
-        << p.throughput_GBPS << " GBPS | "
-        << p.throughput_GOPS << " GOPS }";
+    os << "{ "
+       << fmt_key_val("Benchmark", p.benchmark_name) << ", "
+       << fmt_key_val("Sparsity", p.spmspv_sparsity) << ", "
+       << fmt_key_val("Preprocessing_s", p.preprocess_time_s) << ", "
+       << fmt_key_val("SpMSpV_ms", p.spmspv_time_ms) << ", "
+       << fmt_key_val("TP_GBPS", p.throughput_GBPS) << ", "
+       << fmt_key_val("TP_GOPS", p.throughput_GOPS) << ", "
+       << fmt_key_val("verified", (int)p.verified) << " }";
     return os;
 }
 
-using spmv::io::load_csr_matrix_from_float_npz;
+using namespace std::chrono;
 
-using spmspv::io::csr2csc;
-using spmspv::io::CSCMatrix;
-using spmspv::io::FormattedCSCMatrix;
-using spmspv::io::ColumnCyclicSplitCSC;
-using spmspv::io::formatCSC;
-using spmspv::io::csc_matrix_convert_from_float;
+class test_harness {
+public:
+    std::string name;
+    std::vector<benchmark_result> benchmark_results;
 
+    test_harness(std::string name, std::string dataset, size_t num_hbm_channels) {
+        this->name = name;
+        this->num_hbm_channels = num_hbm_channels;
 
-//---------------------------------------------------------------
-// benchmark function
-//---------------------------------------------------------------
-benchmark_result spmspv_benchmark (
-    std::string name,
-    cl_runtime &runtime,
-    CSCMatrix<float> &csc_matrix_float,
-    float vector_sparsity
-) {
-    using namespace std::chrono;
-    benchmark_result record;
-    record.benchmark_name = name;
+        //--------------------------------------------------------------------
+        // load the CSC matrix
+        //--------------------------------------------------------------------
+        this->csc_matrix_float = csr2csc(load_csr_matrix_from_float_npz(dataset));
+        for (auto &x : this->csc_matrix_float.adj_data) {
+            x = 1.0 / this->csc_matrix_float.num_cols;
+        }
+        this->csc_matrix = csc_matrix_convert_from_float<VAL_T>(this->csc_matrix_float);
 
-    //--------------------------------------------------------------------
-    // load and format the matrix
-    //--------------------------------------------------------------------
-    std::cout << "INFO : Test started" << std::endl;
-    auto t0 = high_resolution_clock::now();
-    std::vector<aligned_packet_t> channel_packets(SPMSPV_NUM_HBM_CHANNEL);
-    std::vector<aligned_idx_t> channel_indptr(SPMSPV_NUM_HBM_CHANNEL);
-    std::vector<aligned_idx_t> channel_partptr(SPMSPV_NUM_HBM_CHANNEL);
-    std::vector<uint32_t> num_cols_each_channel(SPMSPV_NUM_HBM_CHANNEL);
-    aligned_sparse_vec_t vector;
+        //--------------------------------------------------------------------
+        // allocate space for results
+        //--------------------------------------------------------------------
+        this->result.resize(this->csc_matrix.num_rows + 1);
+        std::fill(this->result.begin(), this->result.end(), (IDX_VAL_T){0, 0});
+    }
+
+    void preprocessing() {
+        this->preprocess = std::thread([&]{
+            this->format_matrix();
+        });
+    }
+
+    bool warming_up(cl_runtime &runtime) {
+        this->preprocess.join();
+        return this->transfer_static_buffer(runtime);
+    }
+
+    void set_sparsity_and_run(cl_runtime &runtime, float vector_sparsity) {
+        this->run(runtime, vector_sparsity);
+    }
+
+private:
+
+    std::thread preprocess;
+    double preprocess_time_s;
+
+    CSCMatrix<VAL_T> csc_matrix;
+    CSCMatrix<float> csc_matrix_float;
+
+    size_t num_hbm_channels;
+    std::vector<aligned_packet_t> channel_packets;
+    std::vector<aligned_idx_t> channel_indptr;
+    std::vector<aligned_idx_t> channel_partptr;
+    std::vector<uint32_t> num_cols_each_channel;
     aligned_sparse_vec_t result;
+    uint32_t num_row_partitions;
 
-    CSCMatrix<VAL_T> csc_matrix = csc_matrix_convert_from_float<VAL_T>(csc_matrix_float);
+    // Device static buffers
+    std::vector<cl::Buffer> channel_packets_buf;
+    std::vector<cl::Buffer> channel_indptr_buf;
+    std::vector<cl::Buffer> channel_partptr_buf;
+    cl::Buffer result_buf;
 
-    std::vector<CSCMatrix<VAL_T>> csc_matrices = ColumnCyclicSplitCSC<VAL_T>(csc_matrix, SPMSPV_NUM_HBM_CHANNEL);
-    FormattedCSCMatrix<packet_t> formatted_csc_matrices[SPMSPV_NUM_HBM_CHANNEL];
-    for (uint32_t c = 0; c < SPMSPV_NUM_HBM_CHANNEL; c++) {
-        formatted_csc_matrices[c] = formatCSC<VAL_T, packet_t>(csc_matrices[c],
-                                                               PACK_SIZE,
-                                                               SPMSPV_OUT_BUF_LEN);
-        channel_packets[c] = formatted_csc_matrices[c].get_formatted_packet();
-        channel_indptr[c] = formatted_csc_matrices[c].get_formatted_indptr();
-        channel_partptr[c] = formatted_csc_matrices[c].get_formatted_partptr();
-        num_cols_each_channel[c] = formatted_csc_matrices[c].num_cols;
-    }
-    uint32_t num_row_partitions = formatted_csc_matrices[0].num_row_partitions;
+    // Handle matrix (packet, indptr and partptr) and result
+    std::vector<cl_mem_ext_ptr_t> channel_packets_ext;
+    std::vector<cl_mem_ext_ptr_t> channel_indptr_ext;
+    std::vector<cl_mem_ext_ptr_t> channel_partptr_ext;
+    cl_mem_ext_ptr_t result_ext;
 
-    auto t1 = high_resolution_clock::now();
-    record.preprocess_time_s = double(duration_cast<microseconds>(t1 - t0).count()) / 1000000;
-    std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
-
-    //--------------------------------------------------------------------
-    // generate input vector
-    //--------------------------------------------------------------------
-    unsigned vector_length = csc_matrix.num_cols;
-    unsigned vector_nnz_cnt = (unsigned)floor(vector_length * (1 - vector_sparsity));
-    unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
-
-    aligned_sparse_float_vec_t vector_float(vector_nnz_cnt);
-    for (size_t i = 0; i < vector_nnz_cnt; i++) {
-        vector_float[i].val = (float)(rand() % 10) / 10;
-        vector_float[i].index = i * vector_indices_increment;
-    }
-    IDX_FLOAT_T vector_head;
-    vector_head.index = vector_nnz_cnt;
-    vector_head.val = 0;
-    vector_float.insert(vector_float.begin(), vector_head);
-    vector.resize(vector_float.size());
-    for (size_t i = 0; i < vector[0].index + 1; i++) {
-        vector[i].index = vector_float[i].index;
-        vector[i].val = vector_float[i].val;
-    }
-
-    //--------------------------------------------------------------------
-    // allocate space for results
-    //--------------------------------------------------------------------
-    result.resize(csc_matrix.num_rows + 1);
-    std::fill(result.begin(), result.end(), (IDX_VAL_T){0, 0});
-    std::cout << "INFO : Input/result initialization complete!" << std::endl;
-
-    //--------------------------------------------------------------------
-    // allocate memory on FPGA and move data
-    //--------------------------------------------------------------------
-    cl_int err;
-
-    // Device buffers
-    std::vector<cl::Buffer> channel_packets_buf(SPMSPV_NUM_HBM_CHANNEL);
-    std::vector<cl::Buffer> channel_indptr_buf(SPMSPV_NUM_HBM_CHANNEL);
-    std::vector<cl::Buffer> channel_partptr_buf(SPMSPV_NUM_HBM_CHANNEL);
-
-    // Handle matrix packet, indptr and partptr
-    cl_mem_ext_ptr_t channel_packets_ext[SPMSPV_NUM_HBM_CHANNEL];
-    cl_mem_ext_ptr_t channel_indptr_ext[SPMSPV_NUM_HBM_CHANNEL];
-    cl_mem_ext_ptr_t channel_partptr_ext[SPMSPV_NUM_HBM_CHANNEL];
-
-    for (size_t c = 0; c < SPMSPV_NUM_HBM_CHANNEL; c++) {
-        channel_packets_ext[c].obj = channel_packets[c].data();
-        channel_packets_ext[c].param = 0;
-        channel_packets_ext[c].flags = HBM[c];
-
-        channel_indptr_ext[c].obj = channel_indptr[c].data();
-        channel_indptr_ext[c].param = 0;
-        channel_indptr_ext[c].flags = HBM[c];
-
-        channel_partptr_ext[c].obj = channel_partptr[c].data();
-        channel_partptr_ext[c].param = 0;
-        channel_partptr_ext[c].flags = HBM[c];
-
-        size_t channel_packets_size = sizeof(packet_t) * channel_packets[c].size()
-                                      + sizeof(unsigned) * channel_indptr[c].size()
-                                      + sizeof(unsigned) * channel_partptr[c].size();
-        // std::cout << "channel_packets_size: " << channel_packets_size << std::endl;
-        if (channel_packets_size >= 256 * 1024 * 1024) {
-            std::cout << "The capcity of one HBM channel is 256 MB" << std::endl;
-            exit(EXIT_FAILURE);
-        }
-
-        channel_packets_buf[c] = CL_BUFFER_RDONLY(
-            runtime.context,
-            sizeof(packet_t) * channel_packets[c].size(),
-            channel_packets_ext[c],
-            err
-        );
-        channel_indptr_buf[c] = CL_BUFFER_RDONLY(
-            runtime.context,
-            sizeof(IDX_T) * (num_cols_each_channel[c] + 1) * num_row_partitions,
-            channel_indptr_ext[c],
-            err
-        );
-        channel_partptr_buf[c] = CL_BUFFER_RDONLY(
-            runtime.context,
-            sizeof(IDX_T) * (num_row_partitions + 1),
-            channel_partptr_ext[c],
-            err
-        );
-        if (err != CL_SUCCESS) {
-            std::cout << "ERROR : exception catched when trying to create CL buffer of "
-                      << channel_packets_size/1024/1024 << " MB on HBM "
-                      << c << std::endl;
-        }
-        CHECK_ERR(err);
-    }
-
-    // Handle vector and result
-    CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
-    CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[21]);
-
-    size_t vector_size = sizeof(IDX_VAL_T) * vector.size();
-    size_t result_size = sizeof(IDX_VAL_T) * (csc_matrix.num_rows + 1);
-    cl::Buffer vector_buf
-        = CL_BUFFER_RDONLY(runtime.context, vector_size, vector_ext, err);
-    cl::Buffer result_buf
-        = CL_BUFFER_WRONLY(runtime.context, result_size, result_ext, err);
-    CHECK_ERR(err);
-
-    // transfer data
-    for (size_t c = 0; c < SPMSPV_NUM_HBM_CHANNEL; c++) {
-        OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects({
-            channel_packets_buf[c],
-            channel_indptr_buf[c],
-            channel_partptr_buf[c],
-            }, 0 /* 0 means from host*/));
-    }
-    OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects(
-        {vector_buf}, 0 /* 0 means from host*/));
-    OCL_CHECK(err, err = runtime.command_queue.finish());
-    std::cout << "INFO : Host -> Device data transfer complete!" << std::endl;
-
-    //--------------------------------------------------------------------
-    // invoke kernel
-    //--------------------------------------------------------------------
-    // set kernel arguments that won't change across row iterations
-    std::cout << "INFO : Invoking kernel:";
-    std::cout << " row_partitions: " << num_row_partitions << std::endl;
-
-    for (size_t c = 0; c < SPMSPV_NUM_HBM_CHANNEL; c++) {
-        OCL_CHECK(err, err = runtime.spmspv.setArg(0 + 3*c, channel_packets_buf[c]));
-        OCL_CHECK(err, err = runtime.spmspv.setArg(1 + 3*c, channel_indptr_buf[c]));
-        OCL_CHECK(err, err = runtime.spmspv.setArg(2 + 3*c, channel_partptr_buf[c]));
-    }
-
-    size_t arg_index_offset = 3*SPMSPV_NUM_HBM_CHANNEL;
-    OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 0, vector_buf));
-    OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 1, result_buf));
-    OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 2, csc_matrix.num_rows));
-    OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 3, csc_matrix.num_cols));
-
-    //--------------------------------------------------------------------
-    // benchmarking
-    //--------------------------------------------------------------------
-    double total_time = 0;
-    unsigned Nnz = csc_matrix.adj_data.size();
-    double Mops = 2.0 * Nnz / 1000 / 1000;
-    double gbs = double(Nnz * 2 * 4) / 1024.0 / 1024.0 / 1024.0;
-    for (unsigned i = 0; i < NUM_RUNS; i++) {
+    void format_matrix() {
         auto t0 = high_resolution_clock::now();
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmspv));
-        OCL_CHECK(err, err = runtime.command_queue.finish());
+        this->channel_packets.resize(num_hbm_channels);
+        this->channel_indptr.resize(num_hbm_channels);
+        this->channel_partptr.resize(num_hbm_channels);
+        this->num_cols_each_channel.resize(num_hbm_channels);
+
+        std::vector<CSCMatrix<VAL_T>> csc_matrices =
+            ColumnCyclicSplitCSC<VAL_T>(this->csc_matrix, num_hbm_channels);
+        FormattedCSCMatrix<packet_t> formatted_csc_matrices[num_hbm_channels];
+        for (size_t c = 0; c < num_hbm_channels; c++) {
+            formatted_csc_matrices[c] = formatCSC<VAL_T, packet_t>(csc_matrices[c],
+                                                                   PACK_SIZE,
+                                                                   SPMSPV_OUT_BUF_LEN);
+            this->channel_packets[c] = formatted_csc_matrices[c].get_formatted_packet();
+            this->channel_indptr[c] = formatted_csc_matrices[c].get_formatted_indptr();
+            this->channel_partptr[c] = formatted_csc_matrices[c].get_formatted_partptr();
+            this->num_cols_each_channel[c] = formatted_csc_matrices[c].num_cols;
+        }
+        this->num_row_partitions = formatted_csc_matrices[0].num_row_partitions;
+
         auto t1 = high_resolution_clock::now();
-        total_time += double(duration_cast<microseconds>(t1 - t0).count()) / 1000;
+        this->preprocess_time_s = double(duration_cast<microseconds>(t1 - t0).count()) / 1000000;
     }
-    std::cout << "INFO : SpMSpV Kernel complete "<< NUM_RUNS << " runs!" << std::endl;
 
-    record.spmspv_time_ms = total_time / NUM_RUNS;
-    record.throughput_GBPS = gbs / (record.spmspv_time_ms / 1000);
-    record.throughput_GOPS = Mops / record.spmspv_time_ms;
+    bool transfer_static_buffer(cl_runtime &runtime) {
+        //--------------------------------------------------------------------
+        // allocate static memory on FPGA and move data
+        //--------------------------------------------------------------------
+        cl_int err;
 
-    //--------------------------------------------------------------------
-    // compute reference
-    //--------------------------------------------------------------------
-    aligned_dense_float_vec_t ref_result;
-    compute_ref(csc_matrix_float, vector_float, ref_result);
-    std::cout << "INFO : Compute reference complete!" << std::endl;
+        this->channel_packets_buf.resize(num_hbm_channels);
+        this->channel_indptr_buf.resize(num_hbm_channels);
+        this->channel_partptr_buf.resize(num_hbm_channels);
 
-    //--------------------------------------------------------------------
-    // verify
-    //--------------------------------------------------------------------
-    OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects(
-        {result_buf}, CL_MIGRATE_MEM_OBJECT_HOST));
-    OCL_CHECK(err, err = runtime.command_queue.finish());
-    std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+        this->channel_packets_ext.resize(num_hbm_channels);
+        this->channel_indptr_ext.resize(num_hbm_channels);
+        this->channel_partptr_ext.resize(num_hbm_channels);
 
-    aligned_dense_vec_t upk_result;
-    convert_sparse_vec_to_dense_vec(result, upk_result, csc_matrix.num_rows);
-    std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+        for (size_t c = 0; c < num_hbm_channels; c++) {
+            this->channel_packets_ext[c].obj = this->channel_packets[c].data();
+            this->channel_packets_ext[c].param = 0;
+            #ifdef USE_DDR_CHANNEL
+            this->channel_packets_ext[c].flags = DDR[c];
+            #else
+            this->channel_packets_ext[c].flags = HBM[c];
+            #endif
 
-    verify(ref_result, upk_result); // TODO: record verification
-    std::cout << "INFO : Result verification complete!" << std::endl;
+            this->channel_indptr_ext[c].obj = this->channel_indptr[c].data();
+            this->channel_indptr_ext[c].param = 0;
+            #ifdef USE_DDR_CHANNEL
+            this->channel_indptr_ext[c].flags = DDR[c];
+            #else
+            this->channel_packets_ext[c].flags = HBM[c];
+            #endif
 
-    return record;
-}
+            this->channel_partptr_ext[c].obj = this->channel_partptr[c].data();
+            this->channel_partptr_ext[c].param = 0;
+            #ifdef USE_DDR_CHANNEL
+            this->channel_partptr_ext[c].flags = DDR[c];
+            #else
+            this->channel_packets_ext[c].flags = HBM[c];
+            #endif
 
-//---------------------------------------------------------------
-// test cases
-//---------------------------------------------------------------
+            size_t channel_packets_size = sizeof(packet_t) * this->channel_packets[c].size()
+                                        + sizeof(unsigned) * this->channel_indptr[c].size()
+                                        + sizeof(unsigned) * this->channel_partptr[c].size();
+            // std::cout << "channel_packets_size: " << channel_packets_size << std::endl;
+            #ifdef USE_DDR_CHANNEL
+            if (channel_packets_size / 1024 / 1024 >= 4 * 1024) {
+                std::cout << "The maximum size of one buffer is 4GB in XRT, ";
+                std::cout << "but trying to allocate " << channel_packets_size/1024/1024;
+                std::cout << " MB on DDR " << c << std::endl;
+            #else
+            if (channel_packets_size / 1024 / 1024 >= 256) {
+                std::cout << "The capcity of one HBM channel is 256 MB, ";
+                std::cout << "but trying to allocate " << channel_packets_size/1024/1024;
+                std::cout << " MB on HBM " << c << std::endl;
+            #endif
+                this->benchmark_results.push_back((benchmark_result){
+                    .benchmark_name = this->name,
+                    .spmspv_sparsity = -1,
+                    .preprocess_time_s = this->preprocess_time_s,
+                    .spmspv_time_ms = -1,
+                    .throughput_GBPS = -1,
+                    .throughput_GOPS = -1,
+                    .verified = false,
+                });
+                return false;
+            }
 
-#define LOAD_DATASET(dataset) \
-  CSCMatrix<float> mat_f = csr2csc(load_csr_matrix_from_float_npz((dataset))); \
-  for (auto &x : mat_f.adj_data) x = 1.0 / mat_f.num_cols;
+            this->channel_packets_buf[c] = CL_BUFFER_RDONLY(
+                runtime.context,
+                sizeof(packet_t) * this->channel_packets[c].size(),
+                channel_packets_ext[c],
+                err
+            );
+            this->channel_indptr_buf[c] = CL_BUFFER_RDONLY(
+                runtime.context,
+                sizeof(IDX_T) * (this->num_cols_each_channel[c] + 1) * this->num_row_partitions,
+                channel_indptr_ext[c],
+                err
+            );
+            this->channel_partptr_buf[c] = CL_BUFFER_RDONLY(
+                runtime.context,
+                sizeof(IDX_T) * (this->num_row_partitions + 1),
+                channel_partptr_ext[c],
+                err
+            );
+            if (err != CL_SUCCESS) {
+                std::cout << "ERROR : exception catched when trying to create CL buffer of "
+                #ifdef USE_DDR_CHANNEL
+                          << channel_packets_size/1024/1024 << " MB on DDR "
+                #else
+                          << channel_packets_size/1024/1024 << " MB on HBM "
+                #endif
+                          << c << std::endl;
+            }
+            CHECK_ERR(err);
+        }
 
-std::map<std::string, std::string> test_cases = {
-    { "googleplus",     "graph/gplus_108K_13M_csr_float32.npz" },
-    { "ogbl-ppa",       "graph/ogbl_ppa_576K_42M_csr_float32.npz" },
-    { "hollywood",      "graph/hollywood_1M_113M_csr_float32.npz" },
-    { "pokec",          "graph/pokec_1633K_31M_csr_float32.npz" },
-    { "ogbn-products",  "graph/ogbn_products_2M_124M_csr_float32.npz" },
-    { "mouse-gene",     "graph/mouse_gene_45K_29M_csr_float32.npz" },
-    { "transformer-50", "pruned_nn/transformer_50_512_33288_csr_float32.npz" },
-    { "transformer-60", "pruned_nn/transformer_60_512_33288_csr_float32.npz" },
-    { "transformer-70", "pruned_nn/transformer_70_512_33288_csr_float32.npz" },
-    { "transformer-80", "pruned_nn/transformer_80_512_33288_csr_float32.npz" },
-    { "transformer-90", "pruned_nn/transformer_90_512_33288_csr_float32.npz" },
-    { "transformer-95", "pruned_nn/transformer_95_512_33288_csr_float32.npz" },
+        // Handle result only. Note: vector (deps on sparsity) is not static data
+        result_ext.obj = result.data();
+        result_ext.param = 0;
+        result_ext.flags = HBM[31];
+
+        size_t result_size = sizeof(IDX_VAL_T) * (this->csc_matrix.num_rows + 1);
+        this->result_buf = CL_BUFFER_WRONLY(runtime.context, result_size, result_ext, err);
+        CHECK_ERR(err);
+
+        // transfer data
+        for (size_t c = 0; c < num_hbm_channels; c++) {
+            OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects({
+                channel_packets_buf[c],
+                channel_indptr_buf[c],
+                channel_partptr_buf[c]
+                }, 0 /* 0 means from host*/));
+        }
+        OCL_CHECK(err, err = runtime.command_queue.finish());
+        std::cout << "INFO : Host -> Device data transfer complete!" << std::endl;
+
+        //--------------------------------------------------------------------
+        // invoke kernel
+        //--------------------------------------------------------------------
+        // set kernel arguments that won't change across row iterations
+        std::cout << "INFO : Invoking kernel:";
+        std::cout << " row_partitions: " << this->num_row_partitions << std::endl;
+
+        for (size_t c = 0; c < num_hbm_channels; c++) {
+            OCL_CHECK(err, err = runtime.spmspv.setArg(0 + 3*c, channel_packets_buf[c]));
+            OCL_CHECK(err, err = runtime.spmspv.setArg(1 + 3*c, channel_indptr_buf[c]));
+            OCL_CHECK(err, err = runtime.spmspv.setArg(2 + 3*c, channel_partptr_buf[c]));
+        }
+
+        size_t arg_index_offset = 3*num_hbm_channels;
+        OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 1, result_buf));
+        OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 2, this->csc_matrix.num_rows));
+        OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 3, this->csc_matrix.num_cols));
+
+        return true;
+    }
+
+    void run(cl_runtime &runtime, float vector_sparsity) {
+        //--------------------------------------------------------------------
+        // handle the vector and send to device
+        //--------------------------------------------------------------------
+        cl_int err;
+
+        unsigned vector_length = this->csc_matrix.num_cols;
+        unsigned vector_nnz_cnt = (unsigned)floor(vector_length * (1 - vector_sparsity));
+        unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
+
+        aligned_sparse_float_vec_t vector_float(vector_nnz_cnt);
+        for (size_t i = 0; i < vector_nnz_cnt; i++) {
+            vector_float[i].val = (float)(rand() % 10) / 10;
+            vector_float[i].index = i * vector_indices_increment;
+        }
+        IDX_FLOAT_T vector_head;
+        vector_head.index = vector_nnz_cnt;
+        vector_head.val = 0;
+        vector_float.insert(vector_float.begin(), vector_head);
+
+        aligned_sparse_vec_t vector(vector_float.size());
+        for (size_t i = 0; i < vector_nnz_cnt + 1; i++) {
+            vector[i].index = vector_float[i].index;
+            vector[i].val = vector_float[i].val;
+        }
+
+        CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[30]);
+        cl::Buffer vector_buf = CL_BUFFER_RDONLY(
+            runtime.context,
+            sizeof(IDX_VAL_T) * vector.size(),
+            vector_ext,
+            err
+        );
+        CHECK_ERR(err);
+
+        OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects(
+            {vector_buf}, 0 /* 0 means from host*/));
+        OCL_CHECK(err, err = runtime.command_queue.finish());
+
+        size_t arg_index_offset = 3*num_hbm_channels;
+        OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 0, vector_buf));
+
+        //--------------------------------------------------------------------
+        // compute reference
+        //--------------------------------------------------------------------
+        uint32_t involved_Nnz = 0;
+        aligned_dense_float_vec_t ref_result;
+        std::thread device_compute([&]{
+            compute_ref(this->csc_matrix_float, vector_float, ref_result, involved_Nnz);
+            // std::cout << "INFO : Compute reference complete!" << std::endl;
+        });
+
+        //--------------------------------------------------------------------
+        // benchmarking
+        //--------------------------------------------------------------------
+        double total_time = 0;
+        for (unsigned i = 0; i < NUM_RUNS; i++) {
+            auto t0 = high_resolution_clock::now();
+            OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmspv));
+            OCL_CHECK(err, err = runtime.command_queue.finish());
+            auto t1 = high_resolution_clock::now();
+            total_time += double(duration_cast<microseconds>(t1 - t0).count()) / 1000;
+        }
+        std::cout << "INFO : SpMSpV Kernel complete "<< NUM_RUNS << " runs!" << std::endl;
+
+        double average_time = total_time / NUM_RUNS;
+
+        //--------------------------------------------------------------------
+        // verify
+        //--------------------------------------------------------------------
+        OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects(
+            {result_buf}, CL_MIGRATE_MEM_OBJECT_HOST));
+        OCL_CHECK(err, err = runtime.command_queue.finish());
+        std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+
+        aligned_dense_vec_t upk_result;
+        convert_sparse_vec_to_dense_vec(result, upk_result, csc_matrix.num_rows);
+
+        device_compute.join();
+        bool verified = verify(ref_result, upk_result);
+        std::cout << "INFO : Result verification complete!" << std::endl;
+
+        double Mops = 2.0 * involved_Nnz / 1000 / 1000;
+        double gbs = double(involved_Nnz * 2 * 4) / 1024.0 / 1024.0 / 1024.0;
+
+        auto rec = (benchmark_result){
+            .benchmark_name = this->name,
+            .spmspv_sparsity = vector_sparsity,
+            .preprocess_time_s = this->preprocess_time_s,
+            .spmspv_time_ms = average_time,
+            .throughput_GBPS = gbs / (average_time / 1000),
+            .throughput_GOPS = Mops / average_time,
+            .verified = verified,
+        };
+        std::cout << rec << std::endl;
+        this->benchmark_results.push_back(rec);
+    }
 };
+
+std::vector<float> test_sparsity = { 0.50, 0.90, 0.990, 0.995, 0.999, 0.9995, 0.9999 };
 
 //---------------------------------------------------------------
 // main
 //---------------------------------------------------------------
-
 int main (int argc, char** argv) {
-    // parse command-line arguments
-    if (argc != 2) {
-        std::cout << "Usage: " << argv[0]
-                  << " <xclbin>" << std::endl;
-        return 0;
-    }
-    std::string target = "hw";
-    std::string xclbin = argv[1];
+    // ./bench <dataset_name> <dataset_path> <hw_xclbin_path> <hw_mem_channels> <log_path>
+    std::string name = argv[1], dataset = argv[2], xclbin = argv[3], metric = argv[5];
+    size_t num_channels = std::atoi(argv[4]);
+
+    test_harness test(name, dataset, num_channels);
+    test.preprocessing(); // process in background thread
 
     // setup Xilinx openCL runtime
-    cl_runtime runtime;
-    cl_int err;
     cl::Device device;
     bool found_device = false;
     auto devices = xcl::get_xil_devices();
@@ -465,31 +562,46 @@ int main (int argc, char** argv) {
         std::cout << "ERROR : Failed to find " << "xilinx_u280_xdma_201920_3" << ", exit!\n";
         exit(EXIT_FAILURE);
     }
-    runtime.context = cl::Context(device, NULL, NULL, NULL);
-    auto file_buf = xcl::read_binary_file(xclbin);
-    cl::Program::Binaries binaries{{file_buf.data(), file_buf.size()}};
-    cl::Program program(runtime.context, {device}, binaries, NULL, &err);
+
+    // load different xclbin and create runtime respectively
+    cl_int err;
+    cl_runtime rt;
+    rt.context = cl::Context(device, NULL, NULL, NULL);
+    auto binary_buf = xcl::read_binary_file(xclbin);
+    cl::Program::Binaries binary{{binary_buf.data(), binary_buf.size()}};
+    cl::Program program(rt.context, {device}, binary, NULL, &err);
     if (err != CL_SUCCESS) {
         std::cout << "ERROR : Failed to program device with xclbin file" << std::endl;
-        return 1;
+        exit(EXIT_FAILURE);
     } else {
         std::cout << "INFO : Successfully programmed device with xclbin file" << std::endl;
     }
-    OCL_CHECK(err, runtime.spmspv = cl::Kernel(program, "spmspv", &err));
-
-    OCL_CHECK(err, runtime.command_queue = cl::CommandQueue(
-        runtime.context,
+    OCL_CHECK(err, rt.spmspv = cl::Kernel(program, "spmspv", &err));
+    OCL_CHECK(err, rt.command_queue = cl::CommandQueue(
+        rt.context,
         device,
         CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE,
-        &err));
+        &err
+    ));
 
-    for (const auto &x : test_cases ) {
-      std::cout << "------ Running benchmark on " << x.first << std::endl;
-      LOAD_DATASET("../datasets/" + x.second);
-      std::cout << spmspv_benchmark(x.first, runtime, mat_f, 0.5) << std::endl;
-      std::cout << "===== Benchmark Finished =====" << std::endl;
+    // run benchmark with the specific num_hbm_channels
+    std::cout << "------ Running benchmark on " << test.name << std::endl;
+    if (test.warming_up(rt)) {
+        for (const float &sparsity : test_sparsity) {
+            test.set_sparsity_and_run(rt, sparsity);
+        }
     }
+    std::cout << "===== Benchmark Finished =====" << std::endl;
 
-    std::cout << "===== All Benchmark Finished =====" << std::endl;
+    // output benchmark results
+    std::ofstream log(metric);
+    log << "[ ";
+    size_t len = test.benchmark_results.size();
+    for (size_t i = 0; i < len; ++i) {
+        log << test.benchmark_results[i];
+        log << (i == len - 1 ? " ]" : ", ");
+    }
+    log.close();
+
     return 0;
 }

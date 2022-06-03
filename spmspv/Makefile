@@ -10,6 +10,7 @@ HOST_ARCH = x86
 CXX := g++
 
 CXXFLAGS += -Wall -std=c++14
+LDFLAGS += -lrt -lstdc++
 
 CXXFLAGS += -I/work/shared/common/project_build/graphblas/software/cnpy
 LDFLAGS += -L/work/shared/common/project_build/graphblas/software/cnpy/build -lcnpy
@@ -27,8 +28,6 @@ LDFLAGS += $(xcl2_LDFLAGS)
 include $(PROJ_ROOT)/xrt/includes/opencl/opencl.mk
 CXXFLAGS += $(opencl_CXXFLAGS)
 LDFLAGS += $(opencl_LDFLAGS)
-
-LDFLAGS += -lrt -lstdc++
 
 CXXFLAGS += -Wno-maybe-uninitialized
 CXXFLAGS += -Wno-uninitialized
@@ -86,10 +85,6 @@ benchmark: benchmark.cpp
 check: build host
 	./host $(TARGET) $(SPMSPV_XCLBIN)
 
-######### run test #########
-bench: build benchmark
-	./benchmark $(SPMSPV_XCLBIN)
-
 ######### clean stuff #########
 .PHONY: clean
 clean:
@@ -102,6 +97,7 @@ cleanall: clean
 	rm -rf ./benchmark
 	rm -rf ./emconfig.json
 	rm -rf ./.Xil
+	rm -rf ./.ipcache
 	rm -rf ./_x.sw_emu ./build_dir.sw_emu
 	rm -rf ./_x.hw_emu ./build_dir.hw_emu
 	rm -rf ./_x.hw ./build_dir.hw
