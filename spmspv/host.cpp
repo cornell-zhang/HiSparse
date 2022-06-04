@@ -220,7 +220,7 @@ bool spmspv_test_harness (
     vector_head.val = 0;
     vector_float.insert(vector_float.begin(), vector_head);
     vector.resize(vector_float.size());
-    for (size_t i = 0; i < vector[0].index + 1; i++) {
+    for (size_t i = 0; i < vector_nnz_cnt + 1; i++) {
         vector[i].index = vector_float[i].index;
         vector[i].val = vector_float[i].val;
     }
@@ -291,8 +291,8 @@ bool spmspv_test_harness (
     }
 
     // Handle vector and result
-    CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
-    CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[21]);
+    CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[30]);
+    CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[31]);
 
     size_t vector_size = sizeof(IDX_VAL_T) * vector.size();
     size_t result_size = sizeof(IDX_VAL_T) * (csc_matrix.num_rows + 1);

@@ -326,7 +326,7 @@ private:
             #ifdef USE_DDR_CHANNEL
             this->channel_indptr_ext[c].flags = DDR[c];
             #else
-            this->channel_packets_ext[c].flags = HBM[c];
+            this->channel_indptr_ext[c].flags = HBM[c];
             #endif
 
             this->channel_partptr_ext[c].obj = this->channel_partptr[c].data();
@@ -334,7 +334,7 @@ private:
             #ifdef USE_DDR_CHANNEL
             this->channel_partptr_ext[c].flags = DDR[c];
             #else
-            this->channel_packets_ext[c].flags = HBM[c];
+            this->channel_partptr_ext[c].flags = HBM[c];
             #endif
 
             size_t channel_packets_size = sizeof(packet_t) * this->channel_packets[c].size()
