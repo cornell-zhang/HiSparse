@@ -42,3 +42,6 @@ datasets/graph
 datasets/large
 datasets/pruned_nn
 datasets/sparse_datasets.zip
+
+# datasets
+datasets

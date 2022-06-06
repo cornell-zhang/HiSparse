@@ -348,10 +348,15 @@ bool spmv_test_harness (
         OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
 
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
+        std::cout << "INFO : Invoked vector_loader" << std::endl;
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
+        std::cout << "INFO : Invoked sk0" << std::endl;
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
+        std::cout << "INFO : Invoked sk1" << std::endl;
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
+        std::cout << "INFO : Invoked sk2" << std::endl;
         OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
+        std::cout << "INFO : Invoked result_drain" << std::endl;
         runtime.command_queue.finish();
         std::cout << "INFO : SpMV Kernel Finished: row partition " << row_part_id << std::endl;
     }
@@ -591,15 +596,15 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
-    passed = passed && test_basic(runtime);
-    passed = passed && test_basic_sparse(runtime);
-    passed = passed && test_medium_sparse(runtime);
+    // passed = passed && test_basic(runtime);
+    // passed = passed && test_basic_sparse(runtime);
+    // passed = passed && test_medium_sparse(runtime);
     if (target != "hw_emu") {
-        passed = passed && test_gplus(runtime);
+        // passed = passed && test_gplus(runtime);
         passed = passed && test_ogbl_ppa(runtime);
-        passed = passed && test_transformer_50_t(runtime);
+        // passed = passed && test_transformer_50_t(runtime);
     }
-    passed = passed && test_transformer_95_t(runtime);
+    // passed = passed && test_transformer_95_t(runtime);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;
