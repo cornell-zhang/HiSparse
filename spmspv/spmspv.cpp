@@ -228,7 +228,7 @@ void spmspv(
     // attach head
     IDX_VAL_T result_head;
     result_head.index = result_Nnz;
-    result_head.val = /*Zero*/0;
+    result_head.val = 0;
     result[0] = result_head;
     #ifndef __SYNTHESIS__
     if (line_tracing_spmspv) {

@@ -89,6 +89,8 @@ check: build host
 .PHONY: clean
 clean:
 	rm -rf *.log
+	rm -rf *.csv
+	rm -rf *.jou
 	rm -rf .run
 
 .PHONY: cleanall

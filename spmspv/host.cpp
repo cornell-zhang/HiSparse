@@ -209,6 +209,7 @@ bool spmspv_test_harness (
     unsigned vector_length = csc_matrix.num_cols;
     unsigned vector_nnz_cnt = (unsigned)floor(vector_length * (1 - vector_sparsity));
     unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
+    // unsigned vector_indices_increment = 1;
 
     aligned_sparse_float_vec_t vector_float(vector_nnz_cnt);
     for (size_t i = 0; i < vector_nnz_cnt; i++) {
@@ -354,9 +355,21 @@ bool spmspv_test_harness (
     OCL_CHECK(err, err = runtime.command_queue.finish());
     std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
 
+    std::cout << "INFO : Result NNZ: " << result[0].index << std::endl;
+
+    // for (size_t i = 0; i < result[0].index; i++) {
+    //     std::cout << "INFO: result"
+    //               << " {" << result[i].val << "|@" << result[i].index << "}" << std::endl;
+    // }
+
     aligned_dense_vec_t upk_result;
     convert_sparse_vec_to_dense_vec(result, upk_result, csc_matrix.num_rows);
-    std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+
+    // for (size_t i = 0; i < upk_result.size(); i++) {
+    // std::cout << "INFO: upk_result"
+    //             << " {" << upk_result[i] << "|@" << i << "}" << std::endl;
+    // }
+    std::cout << "INFO : Verifying results ..." << std::endl;
     return verify(ref_result, upk_result);
 }
 
@@ -419,6 +432,19 @@ CSRMatrix<float> create_uniform_sparse_CSR (
 std::string GRAPH_DATASET_DIR = "../datasets/graph/";
 std::string NN_DATASET_DIR = "../datasets/pruned_nn/";
 
+bool test_dense32(cl_runtime &runtime) {
+    std::cout << "------ Running test: on basic dense matrix " << std::endl;
+    CSCMatrix<float> mat_f = csr2csc(create_dense_CSR(32, 32));
+    for (auto &x : mat_f.adj_data) x = 1.0;
+    if (spmspv_test_harness(runtime, mat_f, 0.0)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
 bool test_basic(cl_runtime &runtime) {
     std::cout << "------ Running test: on basic dense matrix " << std::endl;
     CSCMatrix<float> mat_f = csr2csc(create_dense_CSR(128, 128));
@@ -462,7 +488,7 @@ bool test_gplus(cl_runtime &runtime) {
     CSCMatrix<float> mat_f = csr2csc(
         load_csr_matrix_from_float_npz(GRAPH_DATASET_DIR + "gplus_108K_13M_csr_float32.npz"));
     for (auto &x : mat_f.adj_data) x = 1.0 / mat_f.num_cols;
-    if (spmspv_test_harness(runtime, mat_f, 0.5)) {
+    if (spmspv_test_harness(runtime, mat_f, 0.9)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -571,6 +597,7 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
+    passed = passed && test_dense32(runtime);
     passed = passed && test_basic(runtime);
     passed = passed && test_basic_sparse(runtime);
     passed = passed && test_medium_sparse(runtime);
