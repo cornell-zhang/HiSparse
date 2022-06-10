@@ -13,10 +13,10 @@ void spmv_sk2(
     const SPMV_MAT_PKT_T *matrix_hbm_13,      // in
     const SPMV_MAT_PKT_T *matrix_hbm_14,      // in
     const SPMV_MAT_PKT_T *matrix_hbm_15,      // in
-    const unsigned num_row_tiles,         // in
-    const unsigned num_col_tiles,   // in
-    hls::stream<VEC_AXIS_IF_T> &vec_in,          // in
-    hls::stream<VEC_AXIS_IF_T> &res_out         // out
+    const unsigned num_row_tiles,             // in
+    const unsigned num_col_tiles,             // in
+    hls::stream<VEC_AXIS_IF_T> &vec_in,       // in
+    hls::stream<VEC_AXIS_IF_T> &res_out       // out
 ) {
     #pragma HLS interface m_axi port=matrix_hbm_10 offset=slave bundle=spmv_mat10
     #pragma HLS interface m_axi port=matrix_hbm_11 offset=slave bundle=spmv_mat11

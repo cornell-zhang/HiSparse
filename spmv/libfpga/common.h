@@ -9,6 +9,7 @@
 #define IDX_ROW_TILE_MARKER 0xffff0000
 #define IDX_COL_TILE_MARKER 0x0000ffff
 // just let it overflow for VAL_T
+#define VAL_MARKER (VAL_T(0xffffffff))
 
 #ifndef __SYNTHESIS__
 #include <iostream>
@@ -40,8 +41,6 @@ const unsigned FBITS = 32 - IBITS;
 typedef unsigned IDX_T;
 typedef ap_ufixed<32, IBITS, AP_RND, AP_SAT> VAL_T;
 #define VAL_T_BITCAST(v) (v(31,0))
-
-#define VAL_MARKER (VAL_T(0xffffffff))
 
 //-------------------------------------------------------------------------
 // kernel-memory interface packet types

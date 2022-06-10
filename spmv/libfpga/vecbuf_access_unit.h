@@ -7,8 +7,6 @@
 
 #ifndef __SYNTHESIS__
 // #define VAU_LINE_TRACING
-// #define DEBUG
-// #include <bits/stdc++.h>
 #endif
 
 //----------------------------------------------------------------
@@ -62,10 +60,10 @@ void vecbuf_reader(
                 state = VR_IDLE;
                 if (pin.row_idx != 0) {
                     output.write(UPDATE_PLD_EOD_FLUSH(pin.row_idx));
-                    #ifdef DEBUG
-                    std::ofstream vau_log("vau_rd.txt", std::ios::app);
-                    vau_log << "VAU forward flush inst\n";
-                    #endif
+#ifdef VAU_LINE_TRACING
+                    std::cout << "  forward inst of flushing " << pin.row_idx
+                              << " elements" << std::endl;
+#endif
                 } else {
                     output.write(UPDATE_PLD_EOD);
                 }
@@ -78,14 +76,16 @@ void vecbuf_reader(
                 pout.inst = 0;
                 pout.mat_val = pin.mat_val;
                 pout.row_idx = pin.row_idx;
-                pout.vec_val = vector_buffer[(abs_addr / pack_size) % bank_size];
-                #ifdef DEBUG
-                std::ofstream vau_log("vau_rd.txt", std::ios::app);
-                vau_log << "[" << id << "] (" << pout.row_idx << ", " << pin.col_idx << ") " << pout.mat_val << " " << pout.vec_val << "\n";
-                #endif
+                // because of the column tiling scheme - tile width equals to
+                // VB_PER_CLUSTER, the (abs_addr / pack_size) must be within VAU
+                // bank_size, i.e., no need to mod `bank_size` here
+                pout.vec_val = vector_buffer[(abs_addr / pack_size)/* % bank_size*/];
                 output.write(pout);
 #ifdef VAU_LINE_TRACING
                 std::cout << "  output payload:" << pout << std::endl;
+                // std::cout << "[ VAU " << id << " ]: "
+                //           << "(" << pout.row_idx << ", " << pin.col_idx << ") "
+                //           << pout.mat_val << " " << pout.vec_val << std::endl;
 #endif
             }
             break;
@@ -163,14 +163,14 @@ void vecbuf_access_unit(
     hls::stream<VEC_PLD_T> &vec_input,
     hls::stream<UPDATE_PLD_T> &output,
     unsigned num_row_tiles,
-    unsigned num_partitions // num_col_partitions commonly
+    unsigned num_col_tiles
 ) {
     VAL_T vector_buffer[bank_size];
     #pragma HLS stream off variable=vector_buffer
     #pragma HLS bind_storage variable=vector_buffer type=RAM_2P impl=URAM
 
     // +1 due to consuming the last EOS
-    unsigned num_iterations = num_partitions*num_row_tiles + 1;
+    unsigned num_iterations = num_col_tiles * num_row_tiles + 1;
     for (unsigned i = 0; i < num_iterations; i++) {
         #pragma HLS dataflow
         vecbuf_writer<id, bank_size, pack_size>(vec_input, vector_buffer);

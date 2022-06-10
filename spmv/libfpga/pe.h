@@ -117,9 +117,9 @@ void ufixed_pe_process_flushable(
         bool valid = false;
         UPDATE_PLD_T pld;
         if(input.read_nb(pld)) {
-// #ifdef PE_LINE_TRACING
-//         std::cout << "  input payload: " << pld << std::endl;
-// #endif
+#ifdef PE_LINE_TRACING
+        std::cout << "  input payload: " << pld << std::endl;
+#endif
             if (pld.inst == EOD) {
                 exit = true;
                 valid = false;
@@ -305,13 +305,10 @@ void pe_flushable(
         }
 
         if (flush_size != 0) {
-            // #ifndef __SYNTHESIS__
-            // assert(0);
-            // #endif
             // dump results
             output.write(VEC_PLD_SOD);
             // normally the flush_size equals to bank_size, when it's not the last partition
-            ufixed_pe_output<id, bank_size, pack_size>(output, output_buffer, bank_size);
+            ufixed_pe_output<id, bank_size, pack_size>(output, output_buffer, flush_size);
             output.write(VEC_PLD_EOD);
         }
     }

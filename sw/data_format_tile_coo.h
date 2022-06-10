@@ -4,13 +4,19 @@
 #include "data_loader.h"
 #include <cassert>
 #include <cstdint>
-// #include <fstream>
 #include <string>
-#include <sys/types.h>
 #include <vector>
 
 #include "common.h"
-#include "bits/stdc++.h"
+
+// #define DATA_FORMAT_TILE_COO_DEBUG
+
+#ifdef DATA_FORMAT_TILE_COO_DEBUG
+#include <bitset>
+#include <fstream>
+using bits32 = std::bitset<32>;
+std::ofstream mat_log("data_format_matrix.log");
+#endif
 
 namespace spmv {
 namespace io {
@@ -39,11 +45,12 @@ struct TileCOO {
         for (const auto &mat : csr_mats) this->num_rows += mat.num_rows;
         this->num_cols = csr_mats[0].num_cols;
 
-        // std::cout << this->num_rows << " " << tile_height << "\n";
-        assert(this->num_rows % tile_height == 0);
-        assert(this->num_cols % tile_width == 0);
-        this->num_row_tiles = this->num_rows/tile_height;
-        this->num_col_tiles = this->num_cols/tile_width;
+        // assert(this->num_rows % tile_height == 0);
+        // assert(this->num_cols % tile_width == 0);
+        // this->num_row_tiles = this->num_rows/tile_height;
+        // this->num_col_tiles = this->num_cols/tile_width;
+        this->num_row_tiles = (this->num_rows + tile_height - 1) / tile_height;
+        this->num_col_tiles = (this->num_cols + tile_width - 1) / tile_width;
 
         std::vector<indexed_data_type> tiles[this->num_row_tiles]
                                             [this->num_col_tiles]
@@ -56,7 +63,6 @@ struct TileCOO {
         // 3: mat 0 row 1
         // 4: mat 1 row 1
         // ...
-        // auto inter = std::ofstream("intermediate.log");
         for (uint32_t mat_idx = 0; mat_idx < pack_size; mat_idx++) {
             const auto &mat = csr_mats[mat_idx];
             for (uint32_t row_idx = 0; row_idx < mat.num_rows; row_idx++) {
@@ -74,8 +80,11 @@ struct TileCOO {
                             .val = mat.adj_data[i]
                         }
                     );
-                    // inter << (row_idx_in_tile) << " " << col_idx_in_tile << ": " << mat.adj_data[i] << "\n";
-                    // inter << std::bitset<32>((row_idx_in_tile << 16) | (col_idx_in_tile & 0x0000ffff)) << ": " << mat.adj_data[i] << "\n";
+#ifdef DATA_FORMAT_TILE_COO_DEBUG
+                    mat_log << std::bitset<16>(row_idx_in_tile) << " "
+                            << std::bitset<16>(col_idx_in_tile & 0x0000ffff) << ": "
+                            << mat.adj_data[i] << std::endl;
+#endif
                 }
             }
         }
@@ -102,7 +111,10 @@ struct TileCOO {
                     current_stream.push_back(end_marker);
                 }
             }
-            current_stream.pop_back(); // remove the marker at the end of stream
+            // remove the marker at the end of stream
+            current_stream.pop_back();
+            // store the last position of stream in the header, i.e. the traverse
+            // loop should be `for (i = 0; i <= header.index; i++)`
             current_stream[0].index = current_stream.size() - 1;
         }
 
@@ -114,21 +126,37 @@ struct TileCOO {
         }
         indexed_data_type dummy_marker = {.index = IDX_DUMMY_MARKER, .val = VAL_MARKER};
         for (uint32_t sid = 0; sid < pack_size; sid++) {
+            // Note: `k < max_stream_size` cannot be `<=` because the loop bases on offset
+            // of two so-called last indices of streams
             for (uint32_t k = this->stream_data[sid][0].index; k < max_stream_size; k++) {
                 this->stream_data[sid].push_back(dummy_marker);
             }
             this->stream_data[sid][0].index = max_stream_size;
         }
+        // store the number of elements of last row partition in stream[1] header
+        this->stream_data[1][0].index = ((this->num_rows % tile_height) == 0) ?
+                                        tile_height / pack_size : ((this->num_rows % tile_height) / pack_size);
 
+        // Summary of meta data in the format:
+        // Header of stream[0] in a certain HBM channel: the last index of stream
+        // data, and all streams in the same channels have the same alignments.
+        // Header of stream[1]: the number of elements in the last row partition,
+        // be used in result dump of PE.
 
-        // auto log = std::ofstream("mat_channel"+std::to_string(channel_id)+".log");
-        // // log << VAL_MARKER(31,0) << " " << std::bitset<32>(IDX_ROW_TILE_MARKER) << " " <<
-        // // std::bitset<32>(IDX_COL_TILE_MARKER) << " " << std::bitset<32>(IDX_DUMMY_MARKER) << "\n";
-
-        // for (uint32_t sid = 0; sid < pack_size; sid++) {
-        //     for (size_t i = 0; i <= this->stream_data[sid][0].index; i++)
-        //         log << i << ": " << std::bitset<32>(this->stream_data[sid][i].index) << " "<< this->stream_data[sid][i].val(31,0) << "\n";
-        // }
+#ifdef DATA_FORMAT_TILE_COO_DEBUG
+        std::ofstream log("data_format_channel_"+std::to_string(channel_id)+".log");
+        log << "VAL_MARKER is "          << VAL_MARKER(31,0) << std::endl
+            << "IDX_DUMMY_MARKER is "    << bits32(IDX_DUMMY_MARKER) << std::endl
+            << "IDX_ROW_TILE_MARKER is " << bits32(IDX_ROW_TILE_MARKER) << std::endl
+            << "IDX_COL_TILE_MARKER is " << bits32(IDX_COL_TILE_MARKER) << std::endl;
+        for (uint32_t sid = 0; sid < pack_size; sid++) {
+            for (size_t i = 0; i <= this->stream_data[sid][0].index; i++) {
+                auto idx = bits32(this->stream_data[sid][i].index);
+                auto val = this->stream_data[sid][i].val(31,0);
+                log << i << ": " << idx << " "<< val << std::endl;
+            }
+        }
+#endif
     }
 };
 
@@ -175,7 +203,7 @@ std::vector<CSRMatrix<DataT> > RowCyclicSplitCSR(CSRMatrix<DataT> const &in, uin
     return out;
 }
 
-}
-}
+}  // namespace io
+}  // namespace spmv
 
 #endif

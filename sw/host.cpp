@@ -4,7 +4,6 @@
 #include "data_formatter.h"
 
 #include <iostream>
-#include <iomanip>
 #include <assert.h>
 
 #include "xcl2.hpp"
@@ -77,18 +76,12 @@ void unpack_vector(
     aligned_vector<PACKED_VAL_T> &pdv,
     std::vector<VAL_T> &dv
 ) {
-    // auto log = std::ofstream("out_vec.txt");
-    // log << "result: " <<  pdv.size() << "\n";
     dv.resize(pdv.size() * PACK_SIZE);
     for (size_t i = 0; i < pdv.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
             dv[i * PACK_SIZE + k] = pdv[i].data[k];
-            // assert(pdv[i].data[k] == 0);
-            // log << pdv[i].data[k] << " ";
         }
-        // log << "\n";
     }
-
 }
 
 //---------------------------------------------------------------
@@ -150,16 +143,10 @@ bool spmv_test_harness (
     // load and format the matrix
     //--------------------------------------------------------------------
     std::cout << "INFO : Test started" << std::endl;
-    // TODO: check the partition strategy
-    printf("before round: %d x %d\n", ext_matrix.num_rows, ext_matrix.num_cols);
-    util_round_csr_matrix_dim<float>(ext_matrix, NUM_HBM_CHANNELS * OB_PER_CLUSTER, /*PACK_SIZE*/VB_PER_CLUSTER);
-    printf("after round: %d x %d\n", ext_matrix.num_rows, ext_matrix.num_cols);
-    CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
-
-    size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
-    size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
 
     auto num_pes = PACK_SIZE * NUM_HBM_CHANNELS;
+    util_round_csr_matrix_dim<float>(ext_matrix, num_pes, PACK_SIZE);
+    CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
 
     std::vector<CSRMatrix<VAL_T>> splitted_csr_mats = RowCyclicSplitCSR(mat, num_pes);
     std::vector<CSRMatrix<VAL_T>> channel_csr_mat_to_concat[NUM_HBM_CHANNELS];
@@ -176,8 +163,10 @@ bool spmv_test_harness (
         tile_coo_mats.push_back(spmv::io::TileCOO<VAL_T, PACK_SIZE>(
             c,
             channel_csr_mat_to_concat[c],
-            VB_PER_CLUSTER,
-            OB_PER_CLUSTER
+            VB_PER_CLUSTER, // always ensure tile width equals to LOGICAL_VB_SIZE
+                            // due to the column switching (partition) scheme
+            OB_PER_CLUSTER  // to fully utilize the PE output buffer, ensure the 
+                            // tile height equals to LOGICAL_OB_SIZE / NUM_HBM_CHANNELS
         ));
     }
 
@@ -192,12 +181,14 @@ bool spmv_test_harness (
         for (size_t s = 0; s < num_stream_data; s++) {
             SPMV_MAT_PKT_T pkt;
             for (size_t k = 0; k < PACK_SIZE; k++) {
-                // if (s==0) printf("channel[%ld]: pack[%ld] num_stream = %ld\n", c, k, coo.stream_data[k].size());
+                // streams in one channel have the same alignments
                 pkt.vals.data[k] = coo.stream_data[k][s].val;
                 pkt.indices.data[k] = coo.stream_data[k][s].index;
             }
             channel_packets[c].push_back(pkt);
         }
+        // std::cout << "channel " << c << " flush size of last row partition: " 
+        //           << channel_packets[c][0].indices.data[1] << std::endl;
     }
 
     std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
@@ -206,7 +197,7 @@ bool spmv_test_harness (
     // generate input vector
     //--------------------------------------------------------------------
     std::vector<float> vector_f(ext_matrix.num_cols);
-    std::generate(vector_f.begin(), vector_f.end(), [&](){return /*float(rand() % 2)*/ 1.0;});
+    std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
     aligned_vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
     for (size_t i = 0; i < vector.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
@@ -275,8 +266,6 @@ bool spmv_test_harness (
     //--------------------------------------------------------------------
     // set kernel arguments that won't change across row iterations
     std::cout << "INFO : Invoking kernel:" << std::endl;
-    std::cout << "  row_partitions: " << num_row_partitions << std::endl;
-    std::cout << "  col_partitions: " << num_col_partitions << std::endl;
     std::cout << "  num_row_tiles: " << num_row_tiles << std::endl;
     std::cout << "  num_col_tiles: " << num_col_tiles << std::endl;
 
@@ -301,10 +290,9 @@ bool spmv_test_harness (
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(2, (unsigned)num_row_tiles));
+    OCL_CHECK(err, err = runtime.vector_loader.setArg(3, (unsigned)num_col_tiles));
 
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
-
-    assert(num_row_tiles == num_row_partitions);
 
     OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
     OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));

@@ -1,5 +1,6 @@
 # vscode config
 .vscode
+compile_flags.txt
 
 # vitis build/run temp dirs/files
 .ipcache

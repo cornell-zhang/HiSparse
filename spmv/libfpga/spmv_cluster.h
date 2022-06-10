@@ -11,13 +11,12 @@
 
 #include <hls_stream.h>
 #include <ap_fixed.h>
-#include <string>
 
 #include "common.h"
 
 #ifndef __SYNTHESIS__
 // #define SPMV_CLUSTER_H_LINE_TRACING
-// #include <bits/stdc++.h>
+#include <iostream>
 #endif
 
 template<typename T, unsigned len>
@@ -36,15 +35,11 @@ static void coo_matrix_loader(
     const SPMV_MAT_PKT_T *matrix_hbm,                      // in
     hls::stream<EDGE_PLD_T> ML_to_SF_1_stream[PACK_SIZE]   // out
 ) {
-    // prepare to read
-    IDX_T aligned_stream_last_index = matrix_hbm[0].indices.data[0];
-    // flush size of the last partition in each PE
-    IDX_T last_flush_size_each_pe = OB_BANK_SIZE;/*matrix_hbm[0].indices.data[1];*/
-
-    // #ifndef __SYNTHESIS__
-    // auto log = std::ofstream("mat_loader.txt");
-    // log << 0 << ": last index is " << aligned_stream_last_index <<"\n";
-    // #endif
+    // prepare to read header, data[0] is the last index of streams, data[1] is
+    // the flush size of the last partition in each PE
+    PACKED_IDX_T header = matrix_hbm[0].indices;
+    IDX_T aligned_stream_last_index = header.data[0];
+    IDX_T last_flush_size_each_pe = header.data[1];
 
     // attach start-of-data
     for (unsigned k = 0; k < PACK_SIZE; k++) {
@@ -52,20 +47,16 @@ static void coo_matrix_loader(
         ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
     }
 
-    #ifdef __DEBUG
-    #endif
     // TODO: maunally control the burst length will help?
     loop_matrix_loader:
     for (unsigned i = 1; i <= aligned_stream_last_index; i++) {
         #pragma HLS PIPELINE II=1
         SPMV_MAT_PKT_T mat_pkt = matrix_hbm[i];
-        #ifndef __SYNTHESIS__
-        // log << i << ": " << std::bitset<32>(mat_pkt.indices.data[0]) << " " << (mat_pkt.vals.data[0])(31,0) << "\n";
-        #endif
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS UNROLL
-            // format
+            // Format of stream data, `...` means normal non-zero matrix data:
             // [last index of the stream] ... /col switch/ ... /row switch/ ...
+            // Note: there is no row switch marker in the last position
             VAL_T value_in_pkt = mat_pkt.vals.data[k];
             IDX_T index_in_pkt = mat_pkt.indices.data[k];
             if (value_in_pkt == VAL_MARKER) {
@@ -75,6 +66,10 @@ static void coo_matrix_loader(
                         ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
                     break;
                     case IDX_ROW_TILE_MARKER:
+                        // if adjusting the tile height to some value not equals
+                        // to OB_PER_CLUSTER (which means PE output buffer cannot
+                        // be fully utilized), change the arg here to some value
+                        // passed the same way as `last_flush_size_each_pe`
                         ML_to_SF_1_stream[k].write(EDGE_PLD_EOD_FLUSH(OB_BANK_SIZE));
                         ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
                     break;
@@ -84,7 +79,9 @@ static void coo_matrix_loader(
             } else {
                 EDGE_PLD_T input_to_SF_1;
                 input_to_SF_1.mat_val = value_in_pkt;
-                input_to_SF_1.row_idx = (index_in_pkt/* & 0xffff0000*/) >> 16;
+                // the range of `row_idx` and `col_idx` (i.e., the tile dimension)
+                // is [ 0, 65535 ]
+                input_to_SF_1.row_idx = index_in_pkt >> 16;
                 input_to_SF_1.col_idx = index_in_pkt & 0x0000ffff;
                 ML_to_SF_1_stream[k].write(input_to_SF_1);
             }

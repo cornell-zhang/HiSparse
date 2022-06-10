@@ -3,7 +3,6 @@
 
 #include <hls_stream.h>
 #include <ap_int.h>
-#include "shuffle.h"
 #include "common.h"
 
 #ifndef __SYNTHESIS__
@@ -600,15 +599,6 @@ void shuffler_core_flushable(
         next_rotate_priority = (rotate_priority + 1) % num_lanes;
         // ------- end of A stage
 
-        // for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
-        //     #pragma HLS unroll
-        //     if (to_flush[OLid] != 0) {
-        //         PayloadT flush = (PayloadT){0,0,0,EOD};
-        //         flush.row_idx = to_flush[OLid];
-        //         output_lanes[OLid].write(flush);
-        //     }
-        // }
-
         // crossbar stage (C)
         crossbar<PayloadT, num_lanes>(
             valid,
@@ -645,7 +635,7 @@ void shuffler_core_flushable(
     for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
         #pragma HLS unroll
         PayloadT flush = (PayloadT){0,0,0,EOD};
-        flush.row_idx = to_flush[OLid];
+        flush.row_idx = to_flush[OLid]; // forward the flush inst passed from last stage
         output_lanes[OLid].write(flush);
     }
 
