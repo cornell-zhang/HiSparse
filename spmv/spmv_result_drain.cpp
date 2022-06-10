@@ -10,15 +10,12 @@
 extern "C" {
 void spmv_result_drain(
     PACKED_VAL_T *packed_dense_result,      // out
-    const unsigned row_part_id,             // in
-    // const unsigned rows_per_c_in_partition, // in
     hls::stream<VEC_AXIS_IF_T> &from_SLR0,     // out
     hls::stream<VEC_AXIS_IF_T> &from_SLR1,     // out
     hls::stream<VEC_AXIS_IF_T> &from_SLR2      // out
 ) {
     #pragma HLS interface m_axi port=packed_dense_result offset=slave bundle=spmv_vin
     #pragma HLS interface s_axilite port=packed_dense_result bundle=control
-    #pragma HLS interface s_axilite port=row_part_id bundle=control
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=from_SLR0
@@ -33,7 +30,6 @@ void spmv_result_drain(
     char counter = 0;
     unsigned write_counter = 0;
     bool exit = false;
-    unsigned pkt_idx_offset = row_part_id * LOGICAL_OB_SIZE / PACK_SIZE;
     result_drain_main_loop:
     while (!exit) {
         #pragma HLS pipeline II=1
@@ -101,15 +97,14 @@ void spmv_result_drain(
         } // switch (current_input)
         exit = finished.and_reduce();
 
-        unsigned abs_pkt_idx = write_counter + pkt_idx_offset;
         if (do_write) {
             PACKED_VAL_T rout;
             for (unsigned k = 0; k < PACK_SIZE; k++) {
                 #pragma HLS unroll
                 VAL_T_BITCAST(rout.data[k]) = VEC_AXIS_VAL(pkt, k);
             }
+            packed_dense_result[write_counter] = rout;
             write_counter++;
-            packed_dense_result[abs_pkt_idx] = rout;
         }
 
 #ifdef SPMV_RESULT_DRAIN_LINE_TRACING

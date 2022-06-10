@@ -1,4 +1,4 @@
-TARGET := hw_emu
+TARGET := sw_emu
 
 DEVICE = /opt/xilinx/platforms/xilinx_u280_xdma_201920_3/xilinx_u280_xdma_201920_3.xpfm
 

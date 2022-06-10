@@ -467,5 +467,279 @@ void shuffler(
     }
 }
 
+template<typename PayloadT, unsigned num_lanes>
+void shuffler_core_flushable(
+    // fifos
+    hls::stream<PayloadT> input_lanes[num_lanes],
+    hls::stream<PayloadT> output_lanes[num_lanes]
+) {
+    const unsigned shuffler_extra_iters = (ARBITER_LATENCY + 1) * num_lanes;
+    // pipeline control variables
+    ap_uint<num_lanes> fetch_complete = 0;
+    unsigned loop_extra_iters = shuffler_extra_iters;
+    ap_uint<1> state = SF_WORKING;
+    bool loop_exit = false;
+
+    // payloads
+    PayloadT payload[num_lanes];
+    // IDX_T in_addr[num_lanes];
+    #pragma HLS array_partition variable=payload complete
+    // #pragma HLS array_partition variable=in_addr complete
+    ap_uint<num_lanes> valid = 0;
+
+    // resend control
+    PayloadT payload_resend[num_lanes];
+    #pragma HLS array_partition variable=payload_resend complete
+    ap_uint<1> resend[num_lanes];
+    #pragma HLS array_partition variable=resend complete
+    for (unsigned i = 0; i < num_lanes; i++) {
+        #pragma HLS unroll
+        resend[i] = 0;
+    }
+
+    // arbiter outputs
+    unsigned xbar_sel[num_lanes];
+    ap_uint<num_lanes> xbar_valid = 0;
+    #pragma HLS array_partition variable=xbar_sel complete
+    // arbiter priority rotation
+    unsigned rotate_priority = 0;
+    unsigned next_rotate_priority = 0;
+
+    IDX_T to_flush[num_lanes];
+    #pragma HLS array_partition variable=to_flush complete
+
+#ifndef __SYNTHESIS__
+    int iteration_cnt = 0;
+#endif
+
+    loop_shuffle_pipeline:
+    while (!loop_exit) {
+        #pragma HLS pipeline II=1
+        #pragma HLS dependence variable=resend inter RAW true distance=9
+        #pragma HLS dependence variable=payload_resend inter RAW true distance=9
+
+        // Fetch stage (F)
+// #ifndef __SYNTHESIS__
+//         if (line_tracing_shuffle_core) {
+//             if (loop_extra_iters == shuffler_extra_iters) {
+//                 std::cout << "Iteration: " << iteration_cnt << ", "
+//                         << "State: " << (int)state << ", "
+//                         << "loop_extra_iters:" << loop_extra_iters << std::endl;
+//             } else if (loop_extra_iters == 1) {
+//                 std::cout << "Iteration: " << iteration_cnt << ", "
+//                         << "State: " << (int)state << ", "
+//                         << "loop_extra_iters:" << loop_extra_iters << std::endl;
+//             } else {
+//                 std::cout << "." << std::flush;
+//             }
+//         }
+// #endif
+        for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
+            #pragma HLS unroll
+            if (resend[ILid]) {
+                valid[ILid] = 1;
+                payload[ILid] = payload_resend[ILid];
+            } else
+            if (fetch_complete[ILid]) {
+                valid[ILid] = 0;
+                payload[ILid] = (PayloadT){0,0,0,0};
+            } else {
+                to_flush[ILid] = 0;
+                if (input_lanes[ILid].read_nb(payload[ILid])) {
+                    if (payload[ILid].inst == EOD) {
+                        fetch_complete[ILid] = 1;
+                        valid[ILid] = 0;
+                        to_flush[ILid] = payload[ILid].row_idx;
+                    } else {
+                        valid[ILid] = 1;
+                    }
+                } else {
+                    valid[ILid] = 0;
+                    payload[ILid] = (PayloadT){0,0,0,0};
+                }
+            }
+// #ifndef __SYNTHESIS__
+//             if (line_tracing_shuffle_core) {
+//                 if (state == SF_WORKING) {
+//                     std::cout << "  Shuffle core: ILane " << ILid << ", "
+//                             << "resend: " << (resend[ILid] ? "x" : ".") << ", "
+//                             << "payload: " << payload[ILid] << ", "
+//                             << "valid:" << (valid[ILid] ? "x" : ".") << ", "
+//                             << "fetch complete: " << (fetch_complete[ILid] ? "x" : ".") << std::endl;
+//                 }
+//             }
+// #endif
+        }
+
+        switch (state) {
+        case SF_WORKING:
+            if (fetch_complete.and_reduce()) {
+                state = SF_ENDING;
+            }
+            break;
+        case SF_ENDING:
+            loop_extra_iters--;
+            loop_exit = (loop_extra_iters == 0);
+            break;
+        default:
+            break;
+        }
+        // ------- end of F stage
+
+        // Arbiter stage (A) pipeline arbiter, depth = 6
+        rotate_priority = next_rotate_priority;
+        arbiter_1p<num_lanes>(
+            payload,
+            payload_resend,
+            valid,
+            resend,
+            xbar_sel,
+            xbar_valid,
+            rotate_priority
+        );
+        next_rotate_priority = (rotate_priority + 1) % num_lanes;
+        // ------- end of A stage
+
+        // for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        //     #pragma HLS unroll
+        //     if (to_flush[OLid] != 0) {
+        //         PayloadT flush = (PayloadT){0,0,0,EOD};
+        //         flush.row_idx = to_flush[OLid];
+        //         output_lanes[OLid].write(flush);
+        //     }
+        // }
+
+        // crossbar stage (C)
+        crossbar<PayloadT, num_lanes>(
+            valid,
+            xbar_valid,
+            xbar_sel,
+            payload_resend,
+            output_lanes
+        );
+#ifndef __SYNTHESIS__
+        // if (line_tracing_shuffle_core) {
+        //     for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        //         if (state == SF_WORKING) {
+        //             std::cout << "  Shuffle core: OLane " << OLid << ", "
+        //                     << "sel: " << xbar_sel[OLid] << ", "
+        //                     << "payload: " << payload_resend[xbar_sel[OLid]] << ", "
+        //                     << "p-valid:" << (valid[xbar_sel[OLid]] ? "x" : ".") << ", "
+        //                     << "x-valid: " << (xbar_valid[OLid] ? "x" : ".") << std::endl;
+        //         }
+        //     }
+        // }
+#endif
+        // ------- end of C stage
+
+        // line tracing for debug
+// #ifndef __SYNTHESIS__
+//         iteration_cnt++;
+//         if (csim_abort_shuffle_core && iteration_cnt > max_iter_limit_shuffle_core) {
+//             std::cout << "WARNING: shuffle core exceeds the sw_emu iteration limit!" << std::endl;
+//             return;
+//         }
+// #endif
+    } // main while() loop ends here
+
+    for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        #pragma HLS unroll
+        PayloadT flush = (PayloadT){0,0,0,EOD};
+        flush.row_idx = to_flush[OLid];
+        output_lanes[OLid].write(flush);
+    }
+
+}
+
+// shuffler: works on EDGE_PLD_T and UPDATE_PLD_T
+template<typename PayloadT, unsigned num_lanes>
+void shuffler_flushable(
+    hls::stream<PayloadT> input_lanes[num_lanes],
+    hls::stream<PayloadT> output_lanes[num_lanes]
+) {
+    bool first_launch = true;
+    ap_uint<num_lanes> got_EOS = 0;
+    while (!got_EOS.and_reduce()) {
+        #pragma HLS pipeline off
+        ap_uint<num_lanes> got_SOD = 0;
+
+        if (first_launch) {
+            loop_sync_on_SOD:
+            while (!got_SOD.and_reduce()) {
+                #pragma HLS pipeline II=1
+                for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
+                    #pragma HLS unroll
+                    if (!got_SOD[ILid]) {
+                        PayloadT p;
+                        if (input_lanes[ILid].read_nb(p)) {
+// #ifndef __SYNTHESIS__
+//                             if (line_tracing_shuffle) {
+//                                 std::cout << "Shuffle: Lane " << ILid << " got payload:" << p << std::endl;
+//                             }
+// #endif
+                            if (p.inst == SOD) {
+                                got_SOD[ILid] = 1;
+                            }
+                        }
+                    }
+                }
+            } // while() : sync on first SOD
+            first_launch = false;
+// #ifndef __SYNTHESIS__
+//             if (line_tracing_shuffle) {
+//                 std::cout << "Shuffle: successfully synced on first SOD" << std::endl;
+//             }
+// #endif
+        } // first launch SOD sync
+
+        for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+            #pragma HLS unroll
+            output_lanes[OLid].write((PayloadT){0,0,0,SOD});
+        }
+
+        shuffler_core_flushable<PayloadT, num_lanes>(input_lanes, output_lanes);
+// #ifndef __SYNTHESIS__
+//         if (line_tracing_shuffle) {
+//             std::cout << "Shuffle: shuffler_core complete" << std::endl;
+//         }
+// #endif
+
+        got_SOD = 0;
+        loop_sync_on_SOD_EOS:
+        while (!(got_SOD.and_reduce() || got_EOS.and_reduce())) {
+            #pragma HLS pipeline II=1
+            for (unsigned ILid = 0; ILid < num_lanes; ILid++) {
+                #pragma HLS unroll
+                if (!(got_SOD[ILid] || got_EOS[ILid])) {
+                    PayloadT p;
+                    if (input_lanes[ILid].read_nb(p)) {
+                        if (p.inst == EOS) {
+                            got_EOS[ILid] = 1;
+                        } else if (p.inst == SOD) {
+                            got_SOD[ILid] = 1;
+                        }
+                    }
+                }
+            }
+// #ifndef __SYNTHESIS__
+//             if (line_tracing_shuffle) {
+//                 if (got_SOD.and_reduce()) {
+//                     std::cout << "Shuffle: successfully synced on SOD" << std::endl;
+//                 }
+//                 if (got_EOS.and_reduce()) {
+//                     std::cout << "Shuffle: successfully synced on EOS" << std::endl;
+//                 }
+//             }
+// #endif
+        } // while() : EOS or SOD sync
+
+
+    } // while() : EOS sync
+
+    for (unsigned OLid = 0; OLid < num_lanes; OLid++) {
+        #pragma HLS unroll
+        output_lanes[OLid].write((PayloadT){0,0,0,EOS});
+    }
+}
 
 #endif  // SPMV_SHUFFLE_H_

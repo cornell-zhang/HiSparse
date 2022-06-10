@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "data_loader.h"
+#include "data_format_tile_coo.h"
 
 namespace spmv {
 namespace io {

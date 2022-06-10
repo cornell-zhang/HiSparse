@@ -11,12 +11,13 @@
 
 #include <hls_stream.h>
 #include <ap_fixed.h>
+#include <string>
 
 #include "common.h"
-#include "spmv_cluster.h"
 
 #ifndef __SYNTHESIS__
 // #define SPMV_CLUSTER_H_LINE_TRACING
+// #include <bits/stdc++.h>
 #endif
 
 template<typename T, unsigned len>
@@ -31,83 +32,74 @@ T array_max(T array[len]) {
     return result;
 }
 
-namespace {
-void CPSR_matrix_loader(
+static void coo_matrix_loader(
     const SPMV_MAT_PKT_T *matrix_hbm,                      // in
-    unsigned row_partition_idx,                            // in
-    unsigned num_col_partitions,                           // in
-    unsigned num_partitions,                               // in
     hls::stream<EDGE_PLD_T> ML_to_SF_1_stream[PACK_SIZE]   // out
 ) {
-    IDX_T matrix_pkt_offset = num_partitions * 2;
-    for (unsigned col_partition_idx = 0; col_partition_idx < num_col_partitions; col_partition_idx++) {
-        #pragma HLS pipeline off
+    // prepare to read
+    IDX_T aligned_stream_last_index = matrix_hbm[0].indices.data[0];
+    // flush size of the last partition in each PE
+    IDX_T last_flush_size_each_pe = OB_BANK_SIZE;/*matrix_hbm[0].indices.data[1];*/
 
-        // read CPSR matadata: partition start and lengths of each stream
-        unsigned part_id = row_partition_idx * num_col_partitions + col_partition_idx;
-        IDX_T partition_info_idx = 2 * part_id;
-        IDX_T partition_start = matrix_hbm[partition_info_idx].indices.data[0];
-        PACKED_IDX_T part_len_pkt = matrix_hbm[partition_info_idx + 1].indices;
-        IDX_T stream_length[PACK_SIZE];
-        #pragma HLS array_partition variable=stream_length complete
-        for (unsigned k = 0; k < PACK_SIZE; k++) {
-            #pragma HLS unroll
-            stream_length[k] = part_len_pkt.data[k];
-        }
+    // #ifndef __SYNTHESIS__
+    // auto log = std::ofstream("mat_loader.txt");
+    // log << 0 << ": last index is " << aligned_stream_last_index <<"\n";
+    // #endif
 
-        // prepare to read
-        unsigned num_reads = array_max<IDX_T, PACK_SIZE>(stream_length);
-        IDX_T row_idx[PACK_SIZE];
-        #pragma HLS ARRAY_PARTITION variable=row_idx complete
+    // attach start-of-data
+    for (unsigned k = 0; k < PACK_SIZE; k++) {
+        #pragma HLS UNROLL
+        ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
+    }
+
+    #ifdef __DEBUG
+    #endif
+    // TODO: maunally control the burst length will help?
+    loop_matrix_loader:
+    for (unsigned i = 1; i <= aligned_stream_last_index; i++) {
+        #pragma HLS PIPELINE II=1
+        SPMV_MAT_PKT_T mat_pkt = matrix_hbm[i];
+        #ifndef __SYNTHESIS__
+        // log << i << ": " << std::bitset<32>(mat_pkt.indices.data[0]) << " " << (mat_pkt.vals.data[0])(31,0) << "\n";
+        #endif
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS UNROLL
-            row_idx[k] = k;
-        }
-
-        // attach start-of-data
-        for (unsigned k = 0; k < PACK_SIZE; k++) {
-            #pragma HLS UNROLL
-            ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
-        }
-
-        // TODO: maunally control the burst length will help?
-        loop_matrix_loader:
-        for (unsigned i = 0; i < num_reads; i++) {
-            #pragma HLS PIPELINE II=1
-            SPMV_MAT_PKT_T mat_pkt = matrix_hbm[i + partition_start + matrix_pkt_offset];
-            for (unsigned k = 0; k < PACK_SIZE; k++) {
-                #pragma HLS UNROLL
-                if (i < stream_length[k]) {
-                    if (mat_pkt.indices.data[k] == IDX_MARKER) {
-                        // Be careful: mat_pkt.vals.data[k] can not be larger than power(2, 8)
-                        row_idx[k] += (PACK_SIZE * mat_pkt.vals.data[k](31, 32-IBITS));
-                    } else {
-                        EDGE_PLD_T input_to_SF_1;
-                        input_to_SF_1.mat_val = mat_pkt.vals.data[k];
-                        input_to_SF_1.col_idx = mat_pkt.indices.data[k];
-                        input_to_SF_1.row_idx = row_idx[k];
-                        ML_to_SF_1_stream[k].write(input_to_SF_1);
-                    }
+            // format
+            // [last index of the stream] ... /col switch/ ... /row switch/ ...
+            VAL_T value_in_pkt = mat_pkt.vals.data[k];
+            IDX_T index_in_pkt = mat_pkt.indices.data[k];
+            if (value_in_pkt == VAL_MARKER) {
+                switch (index_in_pkt) {
+                    case IDX_COL_TILE_MARKER:
+                        ML_to_SF_1_stream[k].write(EDGE_PLD_EOD);
+                        ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
+                    break;
+                    case IDX_ROW_TILE_MARKER:
+                        ML_to_SF_1_stream[k].write(EDGE_PLD_EOD_FLUSH(OB_BANK_SIZE));
+                        ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
+                    break;
+                    default:
+                    break;
                 }
+            } else {
+                EDGE_PLD_T input_to_SF_1;
+                input_to_SF_1.mat_val = value_in_pkt;
+                input_to_SF_1.row_idx = (index_in_pkt/* & 0xffff0000*/) >> 16;
+                input_to_SF_1.col_idx = index_in_pkt & 0x0000ffff;
+                ML_to_SF_1_stream[k].write(input_to_SF_1);
             }
         }
-
-        // attach end-of-data
-        for (unsigned k = 0; k < PACK_SIZE; k++) {
-            #pragma HLS UNROLL
-            ML_to_SF_1_stream[k].write(EDGE_PLD_EOD);
-        }
-
-    } // loop over column partitions
+    }
 
     // attach end-of-stream
     for (unsigned k = 0; k < PACK_SIZE; k++) {
         #pragma HLS UNROLL
+        ML_to_SF_1_stream[k].write(EDGE_PLD_EOD_FLUSH(last_flush_size_each_pe));
         ML_to_SF_1_stream[k].write(EDGE_PLD_EOS);
     }
 }
 
-void spmv_vector_unpacker (
+static void spmv_vector_unpacker (
     hls::stream<VEC_AXIS_T> &vec_in,
     hls::stream<VEC_PLD_T> vec_out[PACK_SIZE]
 ) {
@@ -131,7 +123,7 @@ void spmv_vector_unpacker (
 // #define SPMV_RESULT_PACKER_LINE_TRACING
 #endif
 
-void spmv_result_packer (
+static void spmv_result_packer (
     hls::stream<VEC_PLD_T> res_in[PACK_SIZE],
     hls::stream<VEC_AXIS_T> &res_out
 ) {
@@ -192,7 +184,7 @@ void spmv_result_packer (
 #endif
     }
 }
-}
+
 
 // one computational cluster
 template<int cluster_id>
@@ -200,10 +192,8 @@ void spmv_cluster(
     const SPMV_MAT_PKT_T *matrix_hbm,       // in
     hls::stream<VEC_AXIS_T> &vec_in,        // in
     hls::stream<VEC_AXIS_T> &res_out,       // out
-    const unsigned row_partition_idx,       // in
-    const unsigned rows_in_partition,       // in
-    const unsigned num_col_partitions,      // in
-    const unsigned num_partitions           // in
+    const unsigned num_row_tiles,       // in
+    const unsigned num_col_tiles      // in
 ) {
 
     hls::stream<EDGE_PLD_T> ML2SF[PACK_SIZE];
@@ -236,11 +226,8 @@ void spmv_cluster(
     std::cout << "INFO : [SpMV cluster] Vector Unpacker complete" << std::endl;
 #endif
 
-    CPSR_matrix_loader(
+    coo_matrix_loader(
         matrix_hbm,
-        row_partition_idx,
-        num_col_partitions,
-        num_partitions,
         ML2SF
     );
 
@@ -248,7 +235,7 @@ void spmv_cluster(
     std::cout << "INFO : [SpMV cluster] Matrix Loader complete" << std::endl;
 #endif
 
-    shuffler<EDGE_PLD_T, PACK_SIZE>(
+    shuffler_flushable<EDGE_PLD_T, PACK_SIZE>(
         ML2SF,
         SF2VAU
     );
@@ -261,56 +248,64 @@ void spmv_cluster(
         SF2VAU[0],
         UPK2VAU[0],
         VAU2SF[0],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<1, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[1],
         UPK2VAU[1],
         VAU2SF[1],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<2, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[2],
         UPK2VAU[2],
         VAU2SF[2],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<3, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[3],
         UPK2VAU[3],
         VAU2SF[3],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<4, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[4],
         UPK2VAU[4],
         VAU2SF[4],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<5, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[5],
         UPK2VAU[5],
         VAU2SF[5],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<6, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[6],
         UPK2VAU[6],
         VAU2SF[6],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
     vecbuf_access_unit<7, VB_BANK_SIZE, PACK_SIZE>(
         SF2VAU[7],
         UPK2VAU[7],
         VAU2SF[7],
-        num_col_partitions
+        num_row_tiles,
+        num_col_tiles
     );
 
 #ifdef SPMV_CLUSTER_H_LINE_TRACING
     std::cout << "INFO : [SpMV cluster] Vector Access Unit complete" << std::endl;
 #endif
 
-    shuffler<UPDATE_PLD_T, PACK_SIZE>(
+    shuffler_flushable<UPDATE_PLD_T, PACK_SIZE>(
         VAU2SF,
         SF2PE
     );
@@ -319,45 +314,37 @@ void spmv_cluster(
     std::cout << "INFO : [SpMV cluster] Shuffler 2 complete" << std::endl;
 #endif
 
-    pe<0, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<0, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[0],
-        PE2PK[0],
-        rows_in_partition / PACK_SIZE
+        PE2PK[0]
     );
-    pe<1, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<1, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[1],
-        PE2PK[1],
-        rows_in_partition / PACK_SIZE
+        PE2PK[1]
     );
-    pe<2, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<2, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[2],
-        PE2PK[2],
-        rows_in_partition / PACK_SIZE
+        PE2PK[2]
     );
-    pe<3, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<3, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[3],
-        PE2PK[3],
-        rows_in_partition / PACK_SIZE
+        PE2PK[3]
     );
-    pe<4, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<4, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[4],
-        PE2PK[4],
-        rows_in_partition / PACK_SIZE
+        PE2PK[4]
     );
-    pe<5, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<5, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[5],
-        PE2PK[5],
-        rows_in_partition / PACK_SIZE
+        PE2PK[5]
     );
-    pe<6, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<6, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[6],
-        PE2PK[6],
-        rows_in_partition / PACK_SIZE
+        PE2PK[6]
     );
-    pe<7, OB_BANK_SIZE, PACK_SIZE>(
+    pe_flushable<7, OB_BANK_SIZE, PACK_SIZE>(
         SF2PE[7],
-        PE2PK[7],
-        rows_in_partition / PACK_SIZE
+        PE2PK[7]
     );
 
 #ifdef SPMV_CLUSTER_H_LINE_TRACING

@@ -7,6 +7,7 @@
 void load_duplicate(
     const PACKED_VAL_T *packed_dense_vector,              // in
     const unsigned num_cols,                              // in
+    const unsigned num_row_tiles,                              // in
     hls::stream<VEC_AXIS_T> duplicate[3]                  // out
 ) {
     #pragma HLS array_partition variable=duplicate complete
@@ -18,51 +19,56 @@ void load_duplicate(
         num_col_last_partition = num_cols % LOGICAL_VB_SIZE;
     }
 
-    vector_loader_over_col_partitions:
-    for (unsigned part_id = 0; part_id < num_col_partitions; part_id++)  {
-        #pragma HLS pipeline off
+    vector_loader_over_row_tiles:
+    for (unsigned row_tile_id = 0; row_tile_id < num_row_tiles; row_tile_id++) {
 
-        // attach switch column partition token
-        VEC_AXIS_T pout_sod;
-        pout_sod.user = SOD;
-        pout_sod.data = 0;
-        for (unsigned k = 0; k < 3; k++) {
-            #pragma HLS unroll
-            duplicate[k].write(pout_sod);
-        }
+        vector_loader_over_col_partitions:
+        for (unsigned part_id = 0; part_id < num_col_partitions; part_id++)  {
+            #pragma HLS pipeline off
 
-        unsigned part_len = LOGICAL_VB_SIZE;
-        if (part_id == num_col_partitions - 1) {
-            part_len = num_col_last_partition;
-        }
-
-        assert(part_len % PACK_SIZE == 0);
-
-        loop_load_vector_packets:
-        for (unsigned i = 0; i < part_len / PACK_SIZE; i++) {
-            #pragma HLS pipeline II=1
-            IDX_T dv_idx = i + part_id * VB_PER_CLUSTER / PACK_SIZE;
-            PACKED_VAL_T dv_pkt = packed_dense_vector[dv_idx];
-            VEC_AXIS_T pout[3];
-            for (unsigned x = 0; x < 3; x++) {
+            // attach switch column partition token
+            VEC_AXIS_T pout_sod;
+            pout_sod.user = SOD;
+            pout_sod.data = 0;
+            for (unsigned k = 0; k < 3; k++) {
                 #pragma HLS unroll
-                for (unsigned k = 0; k < PACK_SIZE; k++) {
-                    #pragma HLS unroll
-                    VEC_AXIS_VAL(pout[x], k) = VAL_T_BITCAST(dv_pkt.data[k]);
-                }
-                pout[x].user = 0;
-                VEC_AXIS_PKT_IDX(pout[x]) = dv_idx;
-                duplicate[x].write(pout[x]);
+                duplicate[k].write(pout_sod);
             }
-        }
 
-        // attach switch column partition token
-        VEC_AXIS_T pout_eod;
-        pout_eod.user = EOD;
-        pout_eod.data = 0;
-        for (unsigned k = 0; k < 3; k++) {
-            #pragma HLS unroll
-            duplicate[k].write(pout_eod);
+            unsigned part_len = LOGICAL_VB_SIZE;
+            if (part_id == num_col_partitions - 1) {
+                part_len = num_col_last_partition;
+            }
+
+            assert(part_len % PACK_SIZE == 0);
+
+            loop_load_vector_packets:
+            for (unsigned i = 0; i < part_len / PACK_SIZE; i++) {
+                #pragma HLS pipeline II=1
+                IDX_T dv_idx = i + part_id * VB_PER_CLUSTER / PACK_SIZE;
+                PACKED_VAL_T dv_pkt = packed_dense_vector[dv_idx];
+                VEC_AXIS_T pout[3];
+                for (unsigned x = 0; x < 3; x++) {
+                    #pragma HLS unroll
+                    for (unsigned k = 0; k < PACK_SIZE; k++) {
+                        #pragma HLS unroll
+                        VEC_AXIS_VAL(pout[x], k) = VAL_T_BITCAST(dv_pkt.data[k]);
+                    }
+                    pout[x].user = 0;
+                    VEC_AXIS_PKT_IDX(pout[x]) = dv_idx;
+                    duplicate[x].write(pout[x]);
+                }
+            }
+
+            // attach switch column partition token
+            VEC_AXIS_T pout_eod;
+            pout_eod.user = EOD;
+            pout_eod.data = 0;
+            for (unsigned k = 0; k < 3; k++) {
+                #pragma HLS unroll
+                duplicate[k].write(pout_eod);
+            }
+
         }
 
     }
@@ -97,8 +103,9 @@ void write_k2ks(
 
 extern "C" {
 void spmv_vector_loader(
-    const PACKED_VAL_T *packed_dense_vector,               // in
-    const unsigned num_cols,                     // in
+    const PACKED_VAL_T *packed_dense_vector,                  // in
+    const unsigned num_cols,                                  // in
+    const unsigned num_row_tiles,                             // in
     hls::stream<VEC_AXIS_IF_T> &to_SLR0,                      // out
     hls::stream<VEC_AXIS_IF_T> &to_SLR1,                      // out
     hls::stream<VEC_AXIS_IF_T> &to_SLR2                       // out
@@ -106,6 +113,7 @@ void spmv_vector_loader(
     #pragma HLS interface m_axi port=packed_dense_vector offset=slave bundle=spmv_vin
     #pragma HLS interface s_axilite port=packed_dense_vector bundle=control
     #pragma HLS interface s_axilite port=num_cols bundle=control
+    #pragma HLS interface s_axilite port=num_row_tiles bundle=control
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=to_SLR0
@@ -115,7 +123,7 @@ void spmv_vector_loader(
     #pragma HLS dataflow
     hls::stream<VEC_AXIS_T> duplicate[3];
     #pragma HLS stream variable=duplicate depth=8
-    load_duplicate(packed_dense_vector, num_cols, duplicate);
+    load_duplicate(packed_dense_vector, num_cols, num_row_tiles, duplicate);
     write_k2ks(duplicate[0], to_SLR0);
     write_k2ks(duplicate[1], to_SLR1);
     write_k2ks(duplicate[2], to_SLR2);

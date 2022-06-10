@@ -15,12 +15,10 @@ void spmv_sk0(
     const SPMV_MAT_PKT_T *matrix_hbm_1,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_2,       // in
     const SPMV_MAT_PKT_T *matrix_hbm_3,       // in
+    const unsigned num_row_tiles,         // in
+    const unsigned num_col_tiles,   // in
     hls::stream<VEC_AXIS_IF_T> &vec_in,          // in
-    hls::stream<VEC_AXIS_IF_T> &res_out,         // out
-    const unsigned row_partition_idx,         // in
-    const unsigned rows_per_c_in_partition,   // in
-    const unsigned num_col_partitions,        // in
-    const unsigned num_partitions             // in
+    hls::stream<VEC_AXIS_IF_T> &res_out         // out
 ) {
     #pragma HLS interface m_axi port=matrix_hbm_0 offset=slave bundle=spmv_mat0
     #pragma HLS interface m_axi port=matrix_hbm_1 offset=slave bundle=spmv_mat1
@@ -31,10 +29,8 @@ void spmv_sk0(
     #pragma HLS interface s_axilite port=matrix_hbm_2 bundle=control
     #pragma HLS interface s_axilite port=matrix_hbm_3 bundle=control
 
-    #pragma HLS interface s_axilite port=row_partition_idx bundle=control
-    #pragma HLS interface s_axilite port=rows_per_c_in_partition bundle=control
-    #pragma HLS interface s_axilite port=num_col_partitions bundle=control
-    #pragma HLS interface s_axilite port=num_partitions bundle=control
+    #pragma HLS interface s_axilite port=num_row_tiles bundle=control
+    #pragma HLS interface s_axilite port=num_col_tiles bundle=control
     #pragma HLS interface s_axilite port=return bundle=control
 
     #pragma HLS interface axis register both port=vec_in
@@ -59,10 +55,8 @@ void spmv_sk0(
         matrix_hbm_0,
         vec_dup[0],
         res[0],
-        row_partition_idx,
-        rows_per_c_in_partition,
-        num_col_partitions,
-        num_partitions
+        num_row_tiles,
+        num_col_tiles
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -73,10 +67,8 @@ void spmv_sk0(
         matrix_hbm_1,
         vec_dup[1],
         res[1],
-        row_partition_idx,
-        rows_per_c_in_partition,
-        num_col_partitions,
-        num_partitions
+        num_row_tiles,
+        num_col_tiles
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -87,10 +79,8 @@ void spmv_sk0(
         matrix_hbm_2,
         vec_dup[2],
         res[2],
-        row_partition_idx,
-        rows_per_c_in_partition,
-        num_col_partitions,
-        num_partitions
+        num_row_tiles,
+        num_col_tiles
     );
 
 #ifdef SPMV_SK0_LINE_TRACING
@@ -101,10 +91,8 @@ void spmv_sk0(
         matrix_hbm_3,
         vec_dup[3],
         res[3],
-        row_partition_idx,
-        rows_per_c_in_partition,
-        num_col_partitions,
-        num_partitions
+        num_row_tiles,
+        num_col_tiles
     );
 
 #ifdef SPMV_SK0_LINE_TRACING

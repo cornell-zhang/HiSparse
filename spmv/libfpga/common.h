@@ -5,7 +5,10 @@
 #include <ap_int.h>
 #include <ap_axi_sdata.h>
 
-#define IDX_MARKER 0xffffffff
+#define IDX_DUMMY_MARKER 0xffffffff
+#define IDX_ROW_TILE_MARKER 0xffff0000
+#define IDX_COL_TILE_MARKER 0x0000ffff
+// just let it overflow for VAL_T
 
 #ifndef __SYNTHESIS__
 #include <iostream>
@@ -37,6 +40,8 @@ const unsigned FBITS = 32 - IBITS;
 typedef unsigned IDX_T;
 typedef ap_ufixed<32, IBITS, AP_RND, AP_SAT> VAL_T;
 #define VAL_T_BITCAST(v) (v(31,0))
+
+#define VAL_MARKER (VAL_T(0xffffffff))
 
 //-------------------------------------------------------------------------
 // kernel-memory interface packet types
@@ -72,6 +77,8 @@ struct EDGE_PLD_T {
 #define EDGE_PLD_SOD ((EDGE_PLD_T){0,0,0,SOD})
 #define EDGE_PLD_EOD ((EDGE_PLD_T){0,0,0,EOD})
 #define EDGE_PLD_EOS ((EDGE_PLD_T){0,0,0,EOS})
+// flush `x` elements in PE output buffer to result drain
+#define EDGE_PLD_EOD_FLUSH(x) ((EDGE_PLD_T){0,(x),0,EOD})
 
 // update payload, used by all PEs
 struct UPDATE_PLD_T {
@@ -83,6 +90,8 @@ struct UPDATE_PLD_T {
 #define UPDATE_PLD_SOD ((UPDATE_PLD_T){0,0,0,SOD})
 #define UPDATE_PLD_EOD ((UPDATE_PLD_T){0,0,0,EOD})
 #define UPDATE_PLD_EOS ((UPDATE_PLD_T){0,0,0,EOS})
+// flush `x` elements in PE output buffer to result drain
+#define UPDATE_PLD_EOD_FLUSH(x) ((UPDATE_PLD_T){0,0,(x),EOD})
 
 // vector payload, used between SpMV vector unpacker <-> SpMV vector reader
 // and all PE outputs

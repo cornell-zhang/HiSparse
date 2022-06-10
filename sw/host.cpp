@@ -77,12 +77,18 @@ void unpack_vector(
     aligned_vector<PACKED_VAL_T> &pdv,
     std::vector<VAL_T> &dv
 ) {
+    // auto log = std::ofstream("out_vec.txt");
+    // log << "result: " <<  pdv.size() << "\n";
     dv.resize(pdv.size() * PACK_SIZE);
     for (size_t i = 0; i < pdv.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
             dv[i * PACK_SIZE + k] = pdv[i].data[k];
+            // assert(pdv[i].data[k] == 0);
+            // log << pdv[i].data[k] << " ";
         }
+        // log << "\n";
     }
+
 }
 
 //---------------------------------------------------------------
@@ -144,98 +150,63 @@ bool spmv_test_harness (
     // load and format the matrix
     //--------------------------------------------------------------------
     std::cout << "INFO : Test started" << std::endl;
-    util_round_csr_matrix_dim<float>(ext_matrix, PACK_SIZE * NUM_HBM_CHANNELS * INTERLEAVE_FACTOR, PACK_SIZE);
+    // TODO: check the partition strategy
+    printf("before round: %d x %d\n", ext_matrix.num_rows, ext_matrix.num_cols);
+    util_round_csr_matrix_dim<float>(ext_matrix, NUM_HBM_CHANNELS * OB_PER_CLUSTER, /*PACK_SIZE*/VB_PER_CLUSTER);
+    printf("after round: %d x %d\n", ext_matrix.num_rows, ext_matrix.num_cols);
     CSRMatrix<VAL_T> mat = csr_matrix_convert_from_float<VAL_T>(ext_matrix);
 
     size_t num_row_partitions = (mat.num_rows + LOGICAL_OB_SIZE - 1) / LOGICAL_OB_SIZE;
     size_t num_col_partitions = (mat.num_cols + LOGICAL_VB_SIZE - 1) / LOGICAL_VB_SIZE;
-    size_t num_partitions = num_row_partitions * num_col_partitions;
-    size_t num_virtual_hbm_channels = NUM_HBM_CHANNELS * INTERLEAVE_FACTOR;
-    CPSRMatrix<PACKED_VAL_T, PACKED_IDX_T, PACK_SIZE> cpsr_matrix
-        = csr2cpsr<PACKED_VAL_T, PACKED_IDX_T, VAL_T, IDX_T, PACK_SIZE>(
-            mat,
-            IDX_MARKER,
-            LOGICAL_OB_SIZE,
-            LOGICAL_VB_SIZE,
-            num_virtual_hbm_channels,
-            skip_empty_rows
-        );
-    using partition_indptr_t = struct {IDX_T start; PACKED_IDX_T nnz;};
-    using ch_partition_indptr_t = std::vector<partition_indptr_t>;
-    using ch_packed_idx_t = std::vector<PACKED_IDX_T>;
-    using ch_packed_val_t = std::vector<PACKED_VAL_T>;
-    using ch_mat_pkt_t = aligned_vector<SPMV_MAT_PKT_T>;
-    std::vector<ch_partition_indptr_t> channel_partition_indptr(num_virtual_hbm_channels);
-    for (size_t c = 0; c < num_virtual_hbm_channels; c++) {
-        channel_partition_indptr[c].resize(num_partitions);
-        channel_partition_indptr[c][0].start = 0;
-    }
-    std::vector<ch_packed_idx_t> channel_indices(num_virtual_hbm_channels);
-    std::vector<ch_packed_val_t> channel_vals(num_virtual_hbm_channels);
-    std::vector<ch_mat_pkt_t> channel_packets(NUM_HBM_CHANNELS);
-    // Iterate virtual channels and map virtual channels (vc) to physical channels (pc)
-    for (size_t pc = 0; pc < NUM_HBM_CHANNELS; pc++) {
-        for (size_t j = 0; j < num_row_partitions; j++) {
-            for (size_t i = 0; i < num_col_partitions; i++) {
-                size_t num_packets_each_virtual_channel[INTERLEAVE_FACTOR];
-                for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
-                    size_t vc = pc + f * NUM_HBM_CHANNELS;
-                    auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, vc);
-                    uint32_t num_packets = *std::max_element(indptr_partition.back().data,
-                                                             indptr_partition.back().data + PACK_SIZE);
-                    num_packets_each_virtual_channel[f] = num_packets;
-                }
-                uint32_t max_num_packets = *std::max_element(num_packets_each_virtual_channel,
-                                                             num_packets_each_virtual_channel + INTERLEAVE_FACTOR);
-                for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
-                    size_t vc = pc + f * NUM_HBM_CHANNELS;
-                    auto indices_partition = cpsr_matrix.get_packed_indices(j, i, vc);
-                    channel_indices[vc].insert(channel_indices[vc].end(), indices_partition.begin(), indices_partition.end());
-                    auto vals_partition = cpsr_matrix.get_packed_data(j, i, vc);
-                    channel_vals[vc].insert(channel_vals[vc].end(), vals_partition.begin(), vals_partition.end());
-                    channel_indices[vc].resize(channel_partition_indptr[vc][j*num_col_partitions + i].start
-                                               + max_num_packets);
-                    channel_vals[vc].resize(channel_partition_indptr[vc][j*num_col_partitions + i].start
-                                            + max_num_packets);
-                    assert(channel_indices[vc].size() == channel_vals[vc].size());
-                    auto indptr_partition = cpsr_matrix.get_packed_indptr(j, i, vc);
-                    channel_partition_indptr[vc][j*num_col_partitions + i].nnz = indptr_partition.back();
-                    if (!((j == (num_row_partitions - 1)) && (i == (num_col_partitions - 1)))) {
-                        channel_partition_indptr[vc][j*num_col_partitions + i + 1].start =
-                            channel_partition_indptr[vc][j*num_col_partitions + i].start + max_num_packets;
-                    }
-                }
-            }
-        }
 
-        channel_packets[pc].resize(num_partitions*(1+INTERLEAVE_FACTOR) + channel_indices[pc].size()*INTERLEAVE_FACTOR);
-        // partition indptr
-        for (size_t ij = 0; ij < num_partitions; ij++) {
-            channel_packets[pc][ij*(1+INTERLEAVE_FACTOR)].indices.data[0] =
-                channel_partition_indptr[pc][ij].start * INTERLEAVE_FACTOR;
-            for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
-                size_t vc = pc + f * NUM_HBM_CHANNELS;
-                channel_packets[pc][ij*(1+INTERLEAVE_FACTOR) + 1 + f].indices = channel_partition_indptr[vc][ij].nnz;
-            }
-        }
-        // matrix indices and vals
-        uint32_t offset = num_partitions*(1+INTERLEAVE_FACTOR);
-        for (size_t i = 0; i < channel_indices[pc].size(); i++) {
-            for (size_t f = 0; f < INTERLEAVE_FACTOR; f++) {
-                size_t vc = pc + f * NUM_HBM_CHANNELS;
-                size_t ii = i*INTERLEAVE_FACTOR + f;
-                channel_packets[pc][offset + ii].indices = channel_indices[vc][i];
-                channel_packets[pc][offset + ii].vals = channel_vals[vc][i];
-            }
+    auto num_pes = PACK_SIZE * NUM_HBM_CHANNELS;
+
+    std::vector<CSRMatrix<VAL_T>> splitted_csr_mats = RowCyclicSplitCSR(mat, num_pes);
+    std::vector<CSRMatrix<VAL_T>> channel_csr_mat_to_concat[NUM_HBM_CHANNELS];
+    // HBM channels:    HBM CHANNEL 0           HBM CHANNEL 1        ...
+    // sets of PEs : [ [0..PACK_SIZE-1], [PACK_SIZE..2*PACK_SIZE-1], ... ]
+    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+        channel_csr_mat_to_concat[c].resize(PACK_SIZE);
+        for (size_t k = 0; k < PACK_SIZE; k++) {
+            channel_csr_mat_to_concat[c][k] = splitted_csr_mats[c*PACK_SIZE + k];
         }
     }
+    std::vector<spmv::io::TileCOO<VAL_T, PACK_SIZE>> tile_coo_mats;
+    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+        tile_coo_mats.push_back(spmv::io::TileCOO<VAL_T, PACK_SIZE>(
+            c,
+            channel_csr_mat_to_concat[c],
+            VB_PER_CLUSTER,
+            OB_PER_CLUSTER
+        ));
+    }
+
+    unsigned num_row_tiles = tile_coo_mats[0].num_row_tiles;
+    unsigned num_col_tiles = tile_coo_mats[0].num_col_tiles;
+
+    using ch_mat_pkt_t = aligned_vector<SPMV_MAT_PKT_T>;
+    std::vector<ch_mat_pkt_t> channel_packets(NUM_HBM_CHANNELS);
+    for (size_t c = 0; c < NUM_HBM_CHANNELS; c++) {
+        auto &coo = tile_coo_mats[c];
+        auto num_stream_data = coo.stream_data[0].size();
+        for (size_t s = 0; s < num_stream_data; s++) {
+            SPMV_MAT_PKT_T pkt;
+            for (size_t k = 0; k < PACK_SIZE; k++) {
+                // if (s==0) printf("channel[%ld]: pack[%ld] num_stream = %ld\n", c, k, coo.stream_data[k].size());
+                pkt.vals.data[k] = coo.stream_data[k][s].val;
+                pkt.indices.data[k] = coo.stream_data[k][s].index;
+            }
+            channel_packets[c].push_back(pkt);
+        }
+    }
+
     std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
 
     //--------------------------------------------------------------------
     // generate input vector
     //--------------------------------------------------------------------
     std::vector<float> vector_f(ext_matrix.num_cols);
-    std::generate(vector_f.begin(), vector_f.end(), [&](){return float(rand() % 2);});
+    std::generate(vector_f.begin(), vector_f.end(), [&](){return /*float(rand() % 2)*/ 1.0;});
     aligned_vector<PACKED_VAL_T> vector(mat.num_cols / PACK_SIZE);
     for (size_t i = 0; i < vector.size(); i++) {
         for (size_t k = 0; k < PACK_SIZE; k++) {
@@ -306,6 +277,8 @@ bool spmv_test_harness (
     std::cout << "INFO : Invoking kernel:" << std::endl;
     std::cout << "  row_partitions: " << num_row_partitions << std::endl;
     std::cout << "  col_partitions: " << num_col_partitions << std::endl;
+    std::cout << "  num_row_tiles: " << num_row_tiles << std::endl;
+    std::cout << "  num_col_tiles: " << num_col_tiles << std::endl;
 
     for (size_t c = 0; c < SK0_CLUSTER; c++) {
         OCL_CHECK(err, err = runtime.spmv_sk0.setArg(c, channel_packets_buf[c]));
@@ -316,45 +289,29 @@ bool spmv_test_harness (
     for (size_t c = 0; c < SK2_CLUSTER; c++) {
         OCL_CHECK(err, err = runtime.spmv_sk2.setArg(c, channel_packets_buf[c + SK0_CLUSTER + SK1_CLUSTER]));
     }
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 5, (unsigned)num_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 4, (unsigned)num_col_partitions));
-    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 5, (unsigned)num_partitions));
+    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 0, (unsigned)num_row_tiles));
+    OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 1, (unsigned)num_col_tiles));
+
+    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 0, (unsigned)num_row_tiles));
+    OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 1, (unsigned)num_col_tiles));
+
+    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 0, (unsigned)num_row_tiles));
+    OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 1, (unsigned)num_col_tiles));
+
     OCL_CHECK(err, err = runtime.vector_loader.setArg(0, vector_buf));
     OCL_CHECK(err, err = runtime.vector_loader.setArg(1, (unsigned)mat.num_cols));
+    OCL_CHECK(err, err = runtime.vector_loader.setArg(2, (unsigned)num_row_tiles));
+
     OCL_CHECK(err, err = runtime.result_drain.setArg(0, result_buf));
 
-    size_t rows_per_ch_in_last_row_part;
-    if (mat.num_rows % LOGICAL_OB_SIZE == 0) {
-        rows_per_ch_in_last_row_part = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
-    } else {
-        rows_per_ch_in_last_row_part = mat.num_rows % LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
-    }
-    for (size_t row_part_id = 0; row_part_id < num_row_partitions; row_part_id++) {
-        unsigned part_len = LOGICAL_OB_SIZE / NUM_HBM_CHANNELS;
-        if (row_part_id == num_row_partitions - 1) {
-            part_len = rows_per_ch_in_last_row_part;
-        }
-        std::cout << "INFO : SpMV Kernel Started: row partition " << row_part_id
-                  << " with " << part_len << " rows per cluster" << std::endl;
-        OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 2, (unsigned)row_part_id));
-        OCL_CHECK(err, err = runtime.spmv_sk0.setArg(SK0_CLUSTER + 3, (unsigned)part_len));
-        OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 2, (unsigned)row_part_id));
-        OCL_CHECK(err, err = runtime.spmv_sk1.setArg(SK1_CLUSTER + 3, (unsigned)part_len));
-        OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 2, (unsigned)row_part_id));
-        OCL_CHECK(err, err = runtime.spmv_sk2.setArg(SK2_CLUSTER + 3, (unsigned)part_len));
-        OCL_CHECK(err, err = runtime.result_drain.setArg(1, (unsigned)row_part_id));
+    assert(num_row_tiles == num_row_partitions);
 
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
-        OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
-        runtime.command_queue.finish();
-        std::cout << "INFO : SpMV Kernel Finished: row partition " << row_part_id << std::endl;
-    }
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.vector_loader));
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk0));
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk1));
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.spmv_sk2));
+    OCL_CHECK(err, err = runtime.command_queue.enqueueTask(runtime.result_drain));
+    runtime.command_queue.finish();
     std::cout << "INFO : SpMV kernel complete!" << std::endl;
 
     //--------------------------------------------------------------------
@@ -591,15 +548,15 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
-    passed = passed && test_basic(runtime);
-    passed = passed && test_basic_sparse(runtime);
-    passed = passed && test_medium_sparse(runtime);
-    if (target != "hw_emu") {
+    // passed = passed && test_basic(runtime);
+    // passed = passed && test_basic_sparse(runtime);
+    // passed = passed && test_medium_sparse(runtime);
+    // if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
-        passed = passed && test_ogbl_ppa(runtime);
-        passed = passed && test_transformer_50_t(runtime);
-    }
-    passed = passed && test_transformer_95_t(runtime);
+    //     passed = passed && test_ogbl_ppa(runtime);
+    //     passed = passed && test_transformer_50_t(runtime);
+    // }
+    // passed = passed && test_transformer_95_t(runtime);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;
