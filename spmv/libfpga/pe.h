@@ -191,6 +191,32 @@ void ufixed_pe_output(
     }
 }
 
+template<int id, unsigned bank_size, unsigned pack_size>
+void ufixed_pe_output_flushable(
+    hls::stream<VEC_PLD_T> &output,
+    VAL_T output_buffer[bank_size],
+    const unsigned used_buf_len
+) {
+    bool exit = false;
+    unsigned dump_count = 0;
+    pe_output_loop:
+    for (unsigned dump_count = 0; dump_count < used_buf_len; dump_count++) {
+        #pragma HLS pipeline II=1
+        #pragma HLS dependence variable=output_buffer inter false
+        #pragma HLS dependence variable=output_buffer intra true
+        VAL_T q = output_buffer[dump_count];
+        output_buffer[dump_count] = 0; // reset to zero after flushing
+        VEC_PLD_T out_pld;
+        out_pld.val = q;
+        out_pld.idx = dump_count * pack_size + id;
+        out_pld.inst = 0x0;
+        output.write(out_pld);
+#ifdef PE_LINE_TRACING
+        std::cout << "  write output: " << VEC_PLD_EOD << std::endl;
+#endif
+    }
+}
+
 //----------------------------------------------------------------
 // unsigned fixed-point pe
 //----------------------------------------------------------------
@@ -308,7 +334,7 @@ void pe_flushable(
             // dump results
             output.write(VEC_PLD_SOD);
             // normally the flush_size equals to bank_size, when it's not the last partition
-            ufixed_pe_output<id, bank_size, pack_size>(output, output_buffer, flush_size);
+            ufixed_pe_output_flushable<id, bank_size, pack_size>(output, output_buffer, flush_size);
             output.write(VEC_PLD_EOD);
         }
     }

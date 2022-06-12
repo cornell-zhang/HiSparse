@@ -5,9 +5,10 @@
 #include <ap_int.h>
 #include <ap_axi_sdata.h>
 
-#define IDX_DUMMY_MARKER 0xffffffff
-#define IDX_ROW_TILE_MARKER 0xffff0000
-#define IDX_COL_TILE_MARKER 0x0000ffff
+#define IDX_DUMMY_MARKER 0
+#define IDX_TILE_SOD_MARKER 0xffffffff
+#define IDX_ROW_TILE_EOD_MARKER 0xffff0000
+#define IDX_COL_TILE_EOD_MARKER 0x0000ffff
 // just let it overflow for VAL_T
 #define VAL_MARKER (VAL_T(0xffffffff))
 

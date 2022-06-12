@@ -165,7 +165,7 @@ bool spmv_test_harness (
             channel_csr_mat_to_concat[c],
             VB_PER_CLUSTER, // always ensure tile width equals to LOGICAL_VB_SIZE
                             // due to the column switching (partition) scheme
-            OB_PER_CLUSTER  // to fully utilize the PE output buffer, ensure the 
+            OB_PER_CLUSTER  // to fully utilize the PE output buffer, ensure the
                             // tile height equals to LOGICAL_OB_SIZE / NUM_HBM_CHANNELS
         ));
     }
@@ -187,8 +187,8 @@ bool spmv_test_harness (
             }
             channel_packets[c].push_back(pkt);
         }
-        // std::cout << "channel " << c << " flush size of last row partition: " 
-        //           << channel_packets[c][0].indices.data[1] << std::endl;
+        std::cout << "channel " << c << " flush size of last row partition: "
+                  << channel_packets[c][0].indices.data[1] << std::endl;
     }
 
     std::cout << "INFO : Matrix loading/preprocessing complete!" << std::endl;
@@ -474,6 +474,19 @@ bool test_transformer_95_t(cl_runtime &runtime) {
     }
 }
 
+bool test_sparse(cl_runtime &runtime, size_t rows, size_t cols, size_t nnz_per_row) {
+    std::cout << "------ Running test: on uniform " << rows << " x " << cols << std::endl;
+    spmv::io::CSRMatrix<float> mat_f = create_uniform_sparse_CSR(rows, cols, nnz_per_row);
+    for (auto &x : mat_f.adj_data) {x = 1;}
+    if (spmv_test_harness(runtime, mat_f, false)) {
+        std::cout << "INFO : Testcase passed." << std::endl;
+        return true;
+    } else {
+        std::cout << "INFO : Testcase failed." << std::endl;
+        return false;
+    }
+}
+
 //---------------------------------------------------------------
 // main
 //---------------------------------------------------------------
@@ -536,9 +549,18 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
-    // passed = passed && test_basic(runtime);
-    // passed = passed && test_basic_sparse(runtime);
-    // passed = passed && test_medium_sparse(runtime);
+    passed = passed && test_basic(runtime);
+    passed = passed && test_basic_sparse(runtime);
+
+    const size_t one_row_tile = OB_PER_CLUSTER * NUM_HBM_CHANNELS;
+    const size_t one_col_tile = VB_PER_CLUSTER;
+    passed = passed && test_sparse(runtime, one_row_tile / 2,     one_col_tile / 2,     16);
+    passed = passed && test_sparse(runtime, one_row_tile,         one_col_tile,         8);
+    passed = passed && test_sparse(runtime, one_row_tile,         one_col_tile + 1,     8);
+    passed = passed && test_sparse(runtime, one_row_tile + 1,     one_col_tile,         8);
+    passed = passed && test_sparse(runtime, one_row_tile + 1,     one_col_tile + 1,     8);
+    passed = passed && test_sparse(runtime, one_row_tile * 2 + 1, one_col_tile * 2 + 1, 4);
+
     // if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
     //     passed = passed && test_ogbl_ppa(runtime);

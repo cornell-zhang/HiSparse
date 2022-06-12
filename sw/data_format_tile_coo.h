@@ -107,11 +107,19 @@ struct TileCOO {
                     indexed_data_type end_marker;
                     end_marker.val = VAL_MARKER;
                     end_marker.index = (tile_col == this->num_col_tiles - 1) ?
-                                        IDX_ROW_TILE_MARKER : IDX_COL_TILE_MARKER;
+                                        IDX_ROW_TILE_EOD_MARKER : IDX_COL_TILE_EOD_MARKER;
                     current_stream.push_back(end_marker);
+                    // only insert SOD marker after those two tile EOD markers
+                    // to ensure matrix loader II=1, and no markers in the head/
+                    // end of the stream data.
+                    indexed_data_type start_marker;
+                    start_marker.val = VAL_MARKER;
+                    start_marker.index = IDX_TILE_SOD_MARKER;
+                    current_stream.push_back(start_marker);
                 }
             }
-            // remove the marker at the end of stream
+            // remove two markers (i.e., row EOD and SOD) at the end of stream
+            current_stream.pop_back();
             current_stream.pop_back();
             // store the last position of stream in the header, i.e. the traverse
             // loop should be `for (i = 0; i <= header.index; i++)`
@@ -145,10 +153,6 @@ struct TileCOO {
 
 #ifdef DATA_FORMAT_TILE_COO_DEBUG
         std::ofstream log("data_format_channel_"+std::to_string(channel_id)+".log");
-        log << "VAL_MARKER is "          << VAL_MARKER(31,0) << std::endl
-            << "IDX_DUMMY_MARKER is "    << bits32(IDX_DUMMY_MARKER) << std::endl
-            << "IDX_ROW_TILE_MARKER is " << bits32(IDX_ROW_TILE_MARKER) << std::endl
-            << "IDX_COL_TILE_MARKER is " << bits32(IDX_COL_TILE_MARKER) << std::endl;
         for (uint32_t sid = 0; sid < pack_size; sid++) {
             for (size_t i = 0; i <= this->stream_data[sid][0].index; i++) {
                 auto idx = bits32(this->stream_data[sid][i].index);

@@ -51,6 +51,7 @@ static void coo_matrix_loader(
     loop_matrix_loader:
     for (unsigned i = 1; i <= aligned_stream_last_index; i++) {
         #pragma HLS PIPELINE II=1
+        #pragma HLS dependence variable=matrix_hbm inter false
         SPMV_MAT_PKT_T mat_pkt = matrix_hbm[i];
         for (unsigned k = 0; k < PACK_SIZE; k++) {
             #pragma HLS UNROLL
@@ -61,19 +62,20 @@ static void coo_matrix_loader(
             IDX_T index_in_pkt = mat_pkt.indices.data[k];
             if (value_in_pkt == VAL_MARKER) {
                 switch (index_in_pkt) {
-                    case IDX_COL_TILE_MARKER:
-                        ML_to_SF_1_stream[k].write(EDGE_PLD_EOD);
+                    case IDX_TILE_SOD_MARKER:
                         ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
                     break;
-                    case IDX_ROW_TILE_MARKER:
+                    case IDX_COL_TILE_EOD_MARKER:
+                        ML_to_SF_1_stream[k].write(EDGE_PLD_EOD);
+                    break;
+                    case IDX_ROW_TILE_EOD_MARKER:
                         // if adjusting the tile height to some value not equals
                         // to OB_PER_CLUSTER (which means PE output buffer cannot
                         // be fully utilized), change the arg here to some value
                         // passed the same way as `last_flush_size_each_pe`
                         ML_to_SF_1_stream[k].write(EDGE_PLD_EOD_FLUSH(OB_BANK_SIZE));
-                        ML_to_SF_1_stream[k].write(EDGE_PLD_SOD);
                     break;
-                    default:
+                    case IDX_DUMMY_MARKER:
                     break;
                 }
             } else {
