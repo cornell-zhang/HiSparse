@@ -89,58 +89,68 @@ struct TileCOO {
             }
         }
 
-        // loop as [0,0] -> [0,1] -> [0,2] ... -> [1,0] -> ... , since tile rows
-        // equals to nums of row partition in SpMV, while tile cols <=> nums of
-        // cols partitions.
-        for (uint32_t stream_idx = 0; stream_idx < pack_size; stream_idx++) {
-            auto &current_stream = this->stream_data[stream_idx];
-            current_stream.push_back({0, 0});
-            for (uint32_t tile_row = 0; tile_row < this->num_row_tiles; tile_row++) {
-                for (uint32_t tile_col = 0; tile_col < this->num_col_tiles; tile_col++) {
-                    // marker is used to distinguish two adjacent tile columns,
-                    // and temporarily reserved space to store the index of the
-                    // last element (no marker in the end) of this tile row.
-                    current_stream.insert(current_stream.end(),
-                        tiles[tile_row][tile_col][stream_idx].begin(),
-                        tiles[tile_row][tile_col][stream_idx].end()
+
+        for (uint32_t sid = 0; sid < pack_size; sid++) {
+            this->stream_data[sid].clear();
+            // reserve the header element to store meta information
+            this->stream_data[sid].push_back({0, 0});
+        }
+
+        indexed_data_type sod_marker = { IDX_TILE_SOD_MARKER, VAL_MARKER };
+        indexed_data_type dummy_marker = { IDX_DUMMY_MARKER, VAL_MARKER };
+        indexed_data_type row_tile_marker = { IDX_ROW_TILE_EOD_MARKER, VAL_MARKER };
+        indexed_data_type col_tile_marker = { IDX_COL_TILE_EOD_MARKER, VAL_MARKER };
+
+        // loop tiles as [0,0] -> [0,1] -> [0,2] ... -> [1,0] -> ... , since the
+        // tile rows equals to nums of row partition in SpMV, while tile cols
+        // <=> nums of cols partitions.
+        for (uint32_t tile_row = 0; tile_row < this->num_row_tiles; tile_row++) {
+            for (uint32_t tile_col = 0; tile_col < this->num_col_tiles; tile_col++) {
+                size_t max_stream_size = 0;
+                for (uint32_t sid = 0; sid < pack_size; sid++) {
+                    this->stream_data[sid].insert(
+                        this->stream_data[sid].end(),
+                        tiles[tile_row][tile_col][sid].begin(),
+                        tiles[tile_row][tile_col][sid].end()
                     );
-                    indexed_data_type end_marker;
-                    end_marker.val = VAL_MARKER;
-                    end_marker.index = (tile_col == this->num_col_tiles - 1) ?
-                                        IDX_ROW_TILE_EOD_MARKER : IDX_COL_TILE_EOD_MARKER;
-                    current_stream.push_back(end_marker);
+                    max_stream_size = std::max(max_stream_size, this->stream_data[sid].size());
+                }
+
+                // align the different streams in one tile (partition) and insert
+                // tile markers
+                for (uint32_t sid = 0; sid < pack_size; sid++) {
+                    auto &current_stream = this->stream_data[sid];
+
+                    // pad dummy elements to the end of data within one tile
+                    // note: `k < max_stream_size` cannot be `<=` because the loop bases on offset
+                    // of two so-called last indices of streams
+                    for (uint32_t k = current_stream.size(); k < max_stream_size; k++) {
+                        current_stream.push_back(dummy_marker);
+                    }
+
+                    // insert row/col tile marker to tell the matrix loader to
+                    // switch partitions
+                    current_stream.push_back((tile_col == this->num_col_tiles - 1) ?
+                                              row_tile_marker : col_tile_marker);
                     // only insert SOD marker after those two tile EOD markers
                     // to ensure matrix loader II=1, and no markers in the head/
                     // end of the stream data.
-                    indexed_data_type start_marker;
-                    start_marker.val = VAL_MARKER;
-                    start_marker.index = IDX_TILE_SOD_MARKER;
-                    current_stream.push_back(start_marker);
+                    current_stream.push_back(sod_marker);
                 }
             }
+        }
+
+        for (uint32_t sid = 0; sid < pack_size; sid++) {
+            auto &current_stream = this->stream_data[sid];
             // remove two markers (i.e., row EOD and SOD) at the end of stream
             current_stream.pop_back();
             current_stream.pop_back();
             // store the last position of stream in the header, i.e. the traverse
             // loop should be `for (i = 0; i <= header.index; i++)`
             current_stream[0].index = current_stream.size() - 1;
+            // assert(current_stream[0].index == this->stream_data[0][0].index);
         }
 
-        // pad dummy elements to the end of data, in order to keep the same size
-        // across all streams
-        uint32_t max_stream_size = this->stream_data[0][0].index;
-        for (uint32_t sid = 1; sid < pack_size; sid++) {
-            max_stream_size = std::max(max_stream_size, this->stream_data[sid][0].index);
-        }
-        indexed_data_type dummy_marker = {.index = IDX_DUMMY_MARKER, .val = VAL_MARKER};
-        for (uint32_t sid = 0; sid < pack_size; sid++) {
-            // Note: `k < max_stream_size` cannot be `<=` because the loop bases on offset
-            // of two so-called last indices of streams
-            for (uint32_t k = this->stream_data[sid][0].index; k < max_stream_size; k++) {
-                this->stream_data[sid].push_back(dummy_marker);
-            }
-            this->stream_data[sid][0].index = max_stream_size;
-        }
         // store the number of elements of last row partition in stream[1] header
         this->stream_data[1][0].index = ((this->num_rows % tile_height) == 0) ?
                                         tile_height / pack_size : ((this->num_rows % tile_height) / pack_size);
