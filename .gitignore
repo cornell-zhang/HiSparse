@@ -16,6 +16,8 @@ emconfig.json
 .run
 *.csv
 xclbin.ex.run_summary
+vitis_analyzer_pid*.zip
+xrt.run_summary
 
 # csim temp dirs
 spmv_csim/csim_headers
