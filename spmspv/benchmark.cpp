@@ -397,7 +397,7 @@ private:
         // Handle result only. Note: vector (deps on sparsity) is not static data
         result_ext.obj = result.data();
         result_ext.param = 0;
-        result_ext.flags = HBM[31];
+        result_ext.flags = HBM[21];
 
         size_t result_size = sizeof(IDX_VAL_T) * (this->csc_matrix.num_rows + 1);
         this->result_buf = CL_BUFFER_WRONLY(runtime.context, result_size, result_ext, err);
@@ -443,12 +443,25 @@ private:
 
         unsigned vector_length = this->csc_matrix.num_cols;
         unsigned vector_nnz_cnt = (unsigned)floor(vector_length * (1 - vector_sparsity));
-        unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
+        // unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
 
         aligned_sparse_float_vec_t vector_float(vector_nnz_cnt);
+        std::vector<unsigned> used_indices;
+        used_indices.reserve(vector_nnz_cnt);
         for (size_t i = 0; i < vector_nnz_cnt; i++) {
             vector_float[i].val = (float)(rand() % 10) / 10;
-            vector_float[i].index = i * vector_indices_increment;
+            // vector_float[i].index = i * vector_indices_increment;
+            while (true) {
+                IDX_T x = rand() % this->csc_matrix.num_cols;
+                for (size_t j = 0; j < used_indices.size(); j++) {
+                    if (x == used_indices[j]) {
+                        break;
+                    }
+                }
+                used_indices.push_back(x);
+                vector_float[i].index = x;
+                break;
+            }
         }
         IDX_FLOAT_T vector_head;
         vector_head.index = vector_nnz_cnt;
@@ -461,7 +474,7 @@ private:
             vector[i].val = vector_float[i].val;
         }
 
-        CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[30]);
+        CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
         cl::Buffer vector_buf = CL_BUFFER_RDONLY(
             runtime.context,
             sizeof(IDX_VAL_T) * vector.size(),

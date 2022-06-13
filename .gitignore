@@ -26,6 +26,8 @@ spmv_csim/csim_headers
 spmv_csim/csim
 sw/benchmark
 sw/host
+spmspv/benchmark
+spmspv/host
 unit_tests/test_pe
 performance_model/design_space_exp
 performance_model/performance_model

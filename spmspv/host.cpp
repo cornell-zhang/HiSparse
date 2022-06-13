@@ -291,13 +291,14 @@ bool spmspv_test_harness (
     }
 
     // Handle vector and result
-    CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[30]);
-    CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[31]);
+    CL_CREATE_EXT_PTR(vector_ext, vector.data(), HBM[20]);
+    CL_CREATE_EXT_PTR(result_ext, result.data(), HBM[21]);
 
     size_t vector_size = sizeof(IDX_VAL_T) * vector.size();
     size_t result_size = sizeof(IDX_VAL_T) * (csc_matrix.num_rows + 1);
     cl::Buffer vector_buf
         = CL_BUFFER_RDONLY(runtime.context, vector_size, vector_ext, err);
+    CHECK_ERR(err);
     cl::Buffer result_buf
         = CL_BUFFER_WRONLY(runtime.context, result_size, result_ext, err);
     CHECK_ERR(err);
@@ -575,7 +576,7 @@ int main (int argc, char** argv) {
     passed = passed && test_medium_sparse(runtime);
     if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
-        // passed = passed && test_ogbl_ppa(runtime);
+        passed = passed && test_ogbl_ppa(runtime);
         passed = passed && test_transformer_50_t(runtime);
     }
     passed = passed && test_transformer_95_t(runtime);
