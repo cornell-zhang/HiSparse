@@ -474,7 +474,7 @@ bool test_medium_sparse(cl_runtime &runtime) {
     std::cout << "------ Running test: on uniform 10K 10 (100K, 1M) " << std::endl;
     CSCMatrix<float> mat_f = csr2csc(create_uniform_sparse_CSR(10000, 10000, 10));
     for (auto &x : mat_f.adj_data) x = 1.0;
-    if (spmspv_test_harness(runtime, mat_f, 0.5)) {
+    if (spmspv_test_harness(runtime, mat_f, 0.7)) {
         std::cout << "INFO : Testcase passed." << std::endl;
         return true;
     } else {
@@ -597,16 +597,16 @@ int main (int argc, char** argv) {
 
     // run tests
     bool passed = true;
-    passed = passed && test_dense32(runtime);
-    passed = passed && test_basic(runtime);
-    passed = passed && test_basic_sparse(runtime);
+    // passed = passed && test_dense32(runtime);
+    // passed = passed && test_basic(runtime);
+    // passed = passed && test_basic_sparse(runtime);
     passed = passed && test_medium_sparse(runtime);
     if (target != "hw_emu") {
         passed = passed && test_gplus(runtime);
         passed = passed && test_ogbl_ppa(runtime);
         passed = passed && test_transformer_50_t(runtime);
     }
-    passed = passed && test_transformer_95_t(runtime);
+    // passed = passed && test_transformer_95_t(runtime);
 
     std::cout << (passed ? "===== All Test Passed! =====" : "===== Test FAILED! =====") << std::endl;
     return passed ? 0 : 1;

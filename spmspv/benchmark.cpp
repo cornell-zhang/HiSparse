@@ -11,7 +11,7 @@
 
 #include "xcl2.hpp"
 
-const unsigned NUM_RUNS = 50;
+const unsigned NUM_RUNS = 1;
 
 // device memory channels
 #define MAX_HBM_CHANNEL_COUNT 32
@@ -205,6 +205,26 @@ std::ostream& operator<<(std::ostream& os, const benchmark_result &p) {
 
 using namespace std::chrono;
 
+// helper function to generate a dense CSC matrix
+CSCMatrix<float> generate_dense_float_csc(unsigned dim) {
+    CSCMatrix<float> float_csc;
+    float_csc.num_rows = dim;
+    float_csc.num_cols = dim;
+    unsigned nnz = float_csc.num_rows*float_csc.num_cols;
+    float_csc.adj_data.resize(nnz);
+    float_csc.adj_indices.resize(nnz);
+    float_csc.adj_indptr.resize(float_csc.num_cols + 1);
+    std::fill(float_csc.adj_data.begin(), float_csc.adj_data.end(), 1.0/dim);
+    float_csc.adj_indptr[0] = 0;
+    for (size_t c = 0; c < dim; c++) {
+        for (size_t r = 0; r < dim; r++) {
+            float_csc.adj_indices[c * dim + r] = r;
+        }
+        float_csc.adj_indptr[c + 1] = float_csc.adj_indptr[c] + dim;
+    }
+    return float_csc;
+}
+
 class test_harness {
 public:
     std::string name;
@@ -221,6 +241,7 @@ public:
         for (auto &x : this->csc_matrix_float.adj_data) {
             x = 1.0 / this->csc_matrix_float.num_cols;
         }
+        // this->csc_matrix_float = generate_dense_float_csc(512);
         this->csc_matrix = csc_matrix_convert_from_float<VAL_T>(this->csc_matrix_float);
 
         //--------------------------------------------------------------------
@@ -442,6 +463,7 @@ private:
         cl_int err;
 
         unsigned vector_length = this->csc_matrix.num_cols;
+        // unsigned vector_nnz_cnt = vector_length;
         unsigned vector_nnz_cnt = (unsigned)floor(vector_length * (1 - vector_sparsity));
         // unsigned vector_indices_increment = vector_length / vector_nnz_cnt;
 
@@ -522,6 +544,7 @@ private:
             {result_buf}, CL_MIGRATE_MEM_OBJECT_HOST));
         OCL_CHECK(err, err = runtime.command_queue.finish());
         std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
+        std::cout << "INFO : Result NNZ: " << result[0].index << std::endl;
 
         aligned_dense_vec_t upk_result;
         convert_sparse_vec_to_dense_vec(result, upk_result, csc_matrix.num_rows);
@@ -547,7 +570,8 @@ private:
     }
 };
 
-std::vector<float> test_sparsity = { 0.50, 0.90, 0.990, 0.995, 0.999, 0.9995, 0.9999 };
+// std::vector<float> test_sparsity = { 0.50, 0.90, 0.990, 0.995, 0.999, 0.9995, 0.9999 };
+std::vector<float> test_sparsity = {0.990};
 
 //---------------------------------------------------------------
 // main

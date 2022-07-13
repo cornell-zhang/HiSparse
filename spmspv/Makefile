@@ -79,7 +79,10 @@ host: host.cpp
 
 ######### build benchmark #########
 benchmark: benchmark.cpp
-	$(CXX) $(CXXFLAGS) -g $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -O3 $(xcl2_SRCS) $< -o benchmark $(LDFLAGS)
+
+benchmark_ddr: benchmark.cpp
+	$(CXX) $(CXXFLAGS) -DUSE_DDR_CHANNEL -O3 $(xcl2_SRCS) $< -o benchmark_ddr $(LDFLAGS)
 
 ######### run test #########
 check: build host
