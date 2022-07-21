@@ -4,6 +4,7 @@
 
 #include <ap_fixed.h>
 #include <hls_stream.h>
+#include <string.h>
 
 #ifndef __SYNTHESIS__
 #include <iostream>
@@ -199,18 +200,24 @@ static void merge_load_streams(
 
 
 // write back to gemm
-const unsigned WB_BURST_LEN = 512;
+const unsigned WB_BURST_LEN = 256;
 
-typedef struct {
-    IDX_T offset;
-    ap_uint<10> length;
-    ap_uint<1> end;
-} CTRL_WORD_T;
+// typedef struct {
+//     IDX_T offset;
+//     ap_uint<10> length;
+//     ap_uint<1> end;
+// } CTRL_WORD_T;
 
-static void read_from_pe_streams (
+// static void read_from_pe_streams (
+//     hls::stream<VEC_PLD_T> PE_to_WB_stream[PACK_SIZE],
+//     hls::stream<IDX_VAL_T> &burst_buf,
+//     hls::stream<CTRL_WORD_T> &ctrl_stream,
+//     IDX_T mat_row_id_base,
+//     IDX_T &Nnz
+// ) {
+static void write_back_results (
     hls::stream<VEC_PLD_T> PE_to_WB_stream[PACK_SIZE],
-    hls::stream<IDX_VAL_T> &burst_buf,
-    hls::stream<CTRL_WORD_T> &ctrl_stream,
+    IDX_VAL_T *res_out,
     IDX_T mat_row_id_base,
     IDX_T &Nnz
 ) {
@@ -219,6 +226,7 @@ static void read_from_pe_streams (
     bool exit = false;
     char current_input = 0; // read from multiple PE output streams
     ap_uint<PACK_SIZE> finished = 0;
+    IDX_VAL_T burst_buf[WB_BURST_LEN];
 
     spmspv_write_back_loop:
     while (!exit) {
@@ -235,16 +243,11 @@ static void read_from_pe_streams (
                     IDX_VAL_T res_pld;
                     res_pld.index = index;
                     res_pld.val = pld.val;
-                    burst_buf.write(res_pld);
+                    burst_buf[batch_counter] = res_pld;
                     nnz_cnt++;
                     // notify the burst writer if we have a whole batch
                     if (batch_counter == WB_BURST_LEN - 1) {
-                        CTRL_WORD_T cw;
-                        cw.offset = nnz_cnt - WB_BURST_LEN + 1; // leave space for the head
-                        cw.length = WB_BURST_LEN;
-                        cw.end = 0;
-                        ctrl_stream.write(cw);
-                        batch_counter = 0;
+                        memcpy(burst_buf, &res_out[nnz_cnt - WB_BURST_LEN + 1], WB_BURST_LEN * sizeof(IDX_VAL_T));
                     } else {
                         batch_counter++;
                     }
@@ -268,20 +271,16 @@ static void read_from_pe_streams (
 
     // handle the reminder (if any)
     if (batch_counter != 0) {
-        CTRL_WORD_T cw;
-        cw.offset = nnz_cnt - batch_counter + 1; // leave space for the head
-        cw.length = batch_counter;
-        cw.end = 0;
-        ctrl_stream.write(cw);
+        memcpy(burst_buf, &res_out[nnz_cnt - batch_counter + 1], batch_counter * sizeof(IDX_VAL_T));
     }
 
-    // denote the end of transaction
-    // here we don't adhere to the token sync protocol
-    CTRL_WORD_T cw_end;
-    cw_end.offset = 0;
-    cw_end.length = 0;
-    cw_end.end = 1;
-    ctrl_stream.write(cw_end);
+    // // denote the end of transaction
+    // // here we don't adhere to the token sync protocol
+    // CTRL_WORD_T cw_end;
+    // cw_end.offset = 0;
+    // cw_end.length = 0;
+    // cw_end.end = 1;
+    // ctrl_stream.write(cw_end);
 
     // update nnz
     Nnz = nnz_cnt;
@@ -293,76 +292,76 @@ static void read_from_pe_streams (
 #endif
 }
 
-static void burst_wirte_to_gmem (
-    hls::stream<IDX_VAL_T> &burst_buf,
-    hls::stream<CTRL_WORD_T> &ctrl_stream, // carries the length of the current batch.
-    IDX_VAL_T *res_out
-) {
-    bool exit = false;
-    while (!exit) {
-        #pragma HLS pipeline off
-        CTRL_WORD_T cw = ctrl_stream.read();
-        exit = cw.end;
-#ifndef __SYNTHESIS__
-        if (line_tracing_spmspv_write_back) {
-            if (!exit) {
-                std::cout << "INFO: [kernel SpMSpV] Burst write"
-                            << " offset " << cw.offset
-                            << " length " << cw.length << std::endl << std::flush;
-            }
-        }
-#endif
-        if (!exit) {
-            for (unsigned i = cw.offset; i < cw.offset + cw.length; i++) {
-                #pragma HLS pipeline II=1
-                // all reads must be valid,
-                // because we feed a control word
-                // after pushing several payloads into
-                // the burst buffer
-                IDX_VAL_T p;
-                burst_buf.read_nb(p);
-                res_out[i] = p;
+// static void burst_wirte_to_gmem (
+//     hls::stream<IDX_VAL_T> &burst_buf,
+//     hls::stream<CTRL_WORD_T> &ctrl_stream, // carries the length of the current batch.
+//     IDX_VAL_T *res_out
+// ) {
+//     bool exit = false;
+//     while (!exit) {
+//         #pragma HLS pipeline off
+//         CTRL_WORD_T cw = ctrl_stream.read();
+//         exit = cw.end;
 // #ifndef __SYNTHESIS__
-//                 if (line_tracing_spmspv_write_back) {
-//                     std::cout << "INFO: [kernel SpMSpV] write"
-//                                 << " {" << p.val << "|@" << p.index << "}"
-//                                 << " into " << i << std::endl << std::flush;
-//                 }
+//         if (line_tracing_spmspv_write_back) {
+//             if (!exit) {
+//                 std::cout << "INFO: [kernel SpMSpV] Burst write"
+//                             << " offset " << cw.offset
+//                             << " length " << cw.length << std::endl << std::flush;
+//             }
+//         }
 // #endif
-            }
-        }
-    }
-}
+//         if (!exit) {
+//             for (unsigned i = cw.offset; i < cw.offset + cw.length; i++) {
+//                 #pragma HLS pipeline II=1
+//                 // all reads must be valid,
+//                 // because we feed a control word
+//                 // after pushing several payloads into
+//                 // the burst buffer
+//                 IDX_VAL_T p;
+//                 burst_buf.read_nb(p);
+//                 res_out[i] = p;
+// // #ifndef __SYNTHESIS__
+// //                 if (line_tracing_spmspv_write_back) {
+// //                     std::cout << "INFO: [kernel SpMSpV] write"
+// //                                 << " {" << p.val << "|@" << p.index << "}"
+// //                                 << " into " << i << std::endl << std::flush;
+// //                 }
+// // #endif
+//             }
+//         }
+//     }
+// }
 
-const unsigned BURST_BUF_LEN = WB_BURST_LEN * 2; // for double buffer
-static void write_back_results (
-    hls::stream<VEC_PLD_T> PE_to_WB_stream[PACK_SIZE],
-    IDX_VAL_T *res_out,
-    IDX_T mat_row_id_base,
-    IDX_T &Nnz
-) {
-    hls::stream<IDX_VAL_T> burst_buf("burst write buffer");
-    #pragma HLS stream variable=burst_buf depth=BURST_BUF_LEN
-    #pragma HLS bind_storage variable=burst_buf type=FIFO impl=BRAM
-    hls::stream<CTRL_WORD_T> ctrl_stream("burst write control stream");
-    #pragma HLS stream variable=ctrl_stream depth=4
-    #pragma HLS bind_storage variable=ctrl_stream type=FIFO impl=SRL
+// const unsigned BURST_BUF_LEN = WB_BURST_LEN * 2; // for double buffer
+// static void write_back_results (
+//     hls::stream<VEC_PLD_T> PE_to_WB_stream[PACK_SIZE],
+//     IDX_VAL_T *res_out,
+//     IDX_T mat_row_id_base,
+//     IDX_T &Nnz
+// ) {
+//     hls::stream<IDX_VAL_T> burst_buf("burst write buffer");
+//     #pragma HLS stream variable=burst_buf depth=BURST_BUF_LEN
+//     #pragma HLS bind_storage variable=burst_buf type=FIFO impl=BRAM
+//     hls::stream<CTRL_WORD_T> ctrl_stream("burst write control stream");
+//     #pragma HLS stream variable=ctrl_stream depth=4
+//     #pragma HLS bind_storage variable=ctrl_stream type=FIFO impl=SRL
 
-    #pragma HLS dataflow
-    read_from_pe_streams (
-        PE_to_WB_stream,
-        burst_buf,
-        ctrl_stream,
-        mat_row_id_base,
-        Nnz
-    );
+//     #pragma HLS dataflow
+//     read_from_pe_streams (
+//         PE_to_WB_stream,
+//         burst_buf,
+//         ctrl_stream,
+//         mat_row_id_base,
+//         Nnz
+//     );
 
-    burst_wirte_to_gmem (
-        burst_buf,
-        ctrl_stream,
-        res_out
-    );
-}
+//     burst_wirte_to_gmem (
+//         burst_buf,
+//         ctrl_stream,
+//         res_out
+//     );
+// }
 // abbreviation for matrix arguments, `x` is the index of HBM channel
 #define SPMSPV_MAT_ARGS(x) \
 const SPMSPV_MAT_PKT_T *mat_##x, \

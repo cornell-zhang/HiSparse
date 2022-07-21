@@ -133,7 +133,7 @@ void spmspv(
 #endif
 
     #pragma HLS interface m_axi port=vector         offset=slave bundle=spmspv_gmem_vec
-    #pragma HLS interface m_axi port=result         offset=slave bundle=spmspv_gmem_out
+    #pragma HLS interface m_axi port=result         offset=slave bundle=spmspv_gmem_out max_read_burst_length=256 max_write_burst_length=256
 
     #pragma HLS interface s_axilite port=vector     bundle=control
     #pragma HLS interface s_axilite port=result     bundle=control
