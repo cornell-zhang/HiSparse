@@ -248,6 +248,7 @@ static void write_back_results (
                     // notify the burst writer if we have a whole batch
                     if (batch_counter == WB_BURST_LEN - 1) {
                         memcpy(burst_buf, &res_out[nnz_cnt - WB_BURST_LEN + 1], WB_BURST_LEN * sizeof(IDX_VAL_T));
+                        batch_counter = 0;
                     } else {
                         batch_counter++;
                     }
