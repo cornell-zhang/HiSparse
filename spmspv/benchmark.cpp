@@ -427,8 +427,8 @@ private:
             while (true) {
                 IDX_T x = rand() % this->csc_matrix.num_cols;
                 for (size_t j = 0; j < used_indices.size(); j++) {
-                    if (x == used_indices[j]) {
-                        break;
+                    if (x == used_indices[j]) { //! TODO: FIX THIS BUG!
+                        break; //! we need to reroll the index, not break
                     }
                 }
                 used_indices.push_back(x);
@@ -496,6 +496,16 @@ private:
         OCL_CHECK(err, err = runtime.command_queue.finish());
         std::cout << "INFO : Device -> Host data transfer complete!" << std::endl;
         std::cout << "INFO : Result NNZ: " << result[0].index << std::endl;
+
+        std::ofstream res_log("gblus_result.dat");
+        unsigned result_nnz = result[0].index;
+        res_log << "Result Nnz: " << result_nnz << "\n";
+        for (size_t i = 1; i < result_nnz + 1; i++) {
+            unsigned idx = result[i].index;
+            unsigned pe = idx % PACK_SIZE;
+            res_log << idx << ", " << pe << "\n";
+        }
+        res_log.close();
 
         aligned_dense_vec_t upk_result;
         convert_sparse_vec_to_dense_vec(result, upk_result, csc_matrix.num_rows);
