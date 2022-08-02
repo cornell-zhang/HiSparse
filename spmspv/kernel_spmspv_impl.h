@@ -56,23 +56,17 @@ static void load_vector_from_gmem(
 
 // data loader for SpMSpV from one HBM channel
 static void load_matrix_from_gmem(
-    // matrix data, row_id
+    // matrix data, row_id, indptr, partptr
     const SPMSPV_MAT_PKT_T *matrix,
-    // matrix indptr
-    const IDX_T *mat_indptr,
-    // matrix part ptr
-    const IDX_T *mat_partptr,
     // partition base
     IDX_T mat_indptr_base,
     IDX_T mat_row_id_base,
-    // current part id
-    IDX_T part_id,
+    IDX_T mat_data_addr_base,
     // fifos
     hls::stream<IDX_VAL_INST_T> &VL_to_ML_stream,
     hls::stream<INST_T> &DL_to_MG_inst,
     hls::stream<UPDATE_PLD_T> DL_to_MG_stream[PACK_SIZE]
 ) {
-    IDX_T mat_addr_base = mat_partptr[part_id];
     bool exit = false;
 
     DL_to_MG_inst.write(SOD); // no need to fill `DL_to_MG_stream` with SOD anymore
@@ -96,14 +90,18 @@ static void load_matrix_from_gmem(
 
             loop_get_column_len_ML:
             for (unsigned int i = 0; i < 2; i++) {
-                #pragma HLS pipeline II=1
-                col_slice[i] = mat_indptr[current_column_id + mat_indptr_base + i];
+                #pragma HLS unroll
+                IDX_T raw_mat_indptr_idx = current_column_id + mat_indptr_base + i;
+                // CSC index pointers start from 0 in `matrix` vals (32b) field
+                IDX_T indptr_pack_idx = raw_mat_indptr_idx / PACK_SIZE;
+                IDX_T indptr_pack_pos = raw_mat_indptr_idx % PACK_SIZE;
+                col_slice[i] = matrix[indptr_pack_idx].vals.data[indptr_pack_pos](31,0);
             }
 
             loop_over_pkts_ML:
             for (unsigned int i = 0; i < (col_slice[1] - col_slice[0]); i++) {
                 #pragma HLS pipeline II=1
-                SPMSPV_MAT_PKT_T packet_from_mat = matrix[i + mat_addr_base + col_slice[0]];
+                SPMSPV_MAT_PKT_T packet_from_mat = matrix[i + mat_data_addr_base + col_slice[0]];
                 DL_to_MG_inst.write(0);
 
                 loop_unpack_ML_unroll:
@@ -129,8 +127,9 @@ static void load_matrix_from_gmem(
 
     #ifndef __SYNTHESIS__
     if (line_tracing_spmspv_load_data) {
+        static int part_id = 0;
         std::cout << "INFO: [kernel SpMSpV] Load matrix finished, part_id = "
-                  << part_id << std::endl << std::flush;
+                  << part_id++ << std::endl << std::flush;
     }
     #endif
 }
@@ -365,9 +364,7 @@ static void write_back_results (
 }
 // abbreviation for matrix arguments, `x` is the index of HBM channel
 #define SPMSPV_MAT_ARGS(x) \
-const SPMSPV_MAT_PKT_T *mat_##x, \
-const IDX_T *mat_indptr_##x, \
-const IDX_T *mat_partptr_##x
+const SPMSPV_MAT_PKT_T *mat_##x
 
 // vec loader -> mat loader -> stream merger -> shuffle -> PE -> write back
 static void spmspv_core(
@@ -435,14 +432,16 @@ static void spmspv_core(
         VL_to_ML_stream
     );
 
+    // CSC part pointers start from 0 in `matrix` indices field
+    IDX_T partptr_pack_idx = part_id / PACK_SIZE;
+    IDX_T partptr_pack_pos = part_id % PACK_SIZE;
+
 #define LOAD_MAT_FROM_HBM(x) \
 load_matrix_from_gmem( \
     mat_##x, \
-    mat_indptr_##x, \
-    mat_partptr_##x, \
     mat_indptr_base_each_channel[x], \
     mat_row_id_base, \
-    part_id, \
+    mat_##x[partptr_pack_idx].indices.data[partptr_pack_pos], \
     VL_to_ML_stream[x], \
     ML_to_MG_inst[x], \
     ML_to_MG_stream[x] \

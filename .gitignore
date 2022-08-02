@@ -46,3 +46,7 @@ datasets/sparse_datasets.zip
 
 # datasets
 datasets
+
+# results
+*.json
+jq

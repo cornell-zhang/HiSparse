@@ -11,7 +11,7 @@
 
 #include "xcl2.hpp"
 
-const unsigned NUM_RUNS = 1;
+const unsigned NUM_RUNS = 50;
 
 // device memory channels
 #define MAX_HBM_CHANNEL_COUNT 32
@@ -276,29 +276,21 @@ private:
 
     size_t num_hbm_channels;
     std::vector<aligned_packet_t> channel_packets;
-    std::vector<aligned_idx_t> channel_indptr;
-    std::vector<aligned_idx_t> channel_partptr;
     std::vector<uint32_t> num_cols_each_channel;
     aligned_sparse_vec_t result;
     uint32_t num_row_partitions;
 
     // Device static buffers
     std::vector<cl::Buffer> channel_packets_buf;
-    std::vector<cl::Buffer> channel_indptr_buf;
-    std::vector<cl::Buffer> channel_partptr_buf;
     cl::Buffer result_buf;
 
     // Handle matrix (packet, indptr and partptr) and result
     std::vector<cl_mem_ext_ptr_t> channel_packets_ext;
-    std::vector<cl_mem_ext_ptr_t> channel_indptr_ext;
-    std::vector<cl_mem_ext_ptr_t> channel_partptr_ext;
     cl_mem_ext_ptr_t result_ext;
 
     void format_matrix() {
         auto t0 = high_resolution_clock::now();
         this->channel_packets.resize(num_hbm_channels);
-        this->channel_indptr.resize(num_hbm_channels);
-        this->channel_partptr.resize(num_hbm_channels);
         this->num_cols_each_channel.resize(num_hbm_channels);
 
         std::vector<CSCMatrix<VAL_T>> csc_matrices =
@@ -308,9 +300,7 @@ private:
             formatted_csc_matrices[c] = formatCSC<VAL_T, packet_t>(csc_matrices[c],
                                                                    PACK_SIZE,
                                                                    SPMSPV_OUT_BUF_LEN);
-            this->channel_packets[c] = formatted_csc_matrices[c].get_formatted_packet();
-            this->channel_indptr[c] = formatted_csc_matrices[c].get_formatted_indptr();
-            this->channel_partptr[c] = formatted_csc_matrices[c].get_formatted_partptr();
+            this->channel_packets[c] = formatted_csc_matrices[c].get_fused_matrix<VAL_T>();
             this->num_cols_each_channel[c] = formatted_csc_matrices[c].num_cols;
         }
         this->num_row_partitions = formatted_csc_matrices[0].num_row_partitions;
@@ -326,12 +316,7 @@ private:
         cl_int err;
 
         this->channel_packets_buf.resize(num_hbm_channels);
-        this->channel_indptr_buf.resize(num_hbm_channels);
-        this->channel_partptr_buf.resize(num_hbm_channels);
-
         this->channel_packets_ext.resize(num_hbm_channels);
-        this->channel_indptr_ext.resize(num_hbm_channels);
-        this->channel_partptr_ext.resize(num_hbm_channels);
 
         for (size_t c = 0; c < num_hbm_channels; c++) {
             this->channel_packets_ext[c].obj = this->channel_packets[c].data();
@@ -342,25 +327,7 @@ private:
             this->channel_packets_ext[c].flags = HBM[c];
             #endif
 
-            this->channel_indptr_ext[c].obj = this->channel_indptr[c].data();
-            this->channel_indptr_ext[c].param = 0;
-            #ifdef USE_DDR_CHANNEL
-            this->channel_indptr_ext[c].flags = DDR[c];
-            #else
-            this->channel_indptr_ext[c].flags = HBM[c];
-            #endif
-
-            this->channel_partptr_ext[c].obj = this->channel_partptr[c].data();
-            this->channel_partptr_ext[c].param = 0;
-            #ifdef USE_DDR_CHANNEL
-            this->channel_partptr_ext[c].flags = DDR[c];
-            #else
-            this->channel_partptr_ext[c].flags = HBM[c];
-            #endif
-
-            size_t channel_packets_size = sizeof(packet_t) * this->channel_packets[c].size()
-                                        + sizeof(unsigned) * this->channel_indptr[c].size()
-                                        + sizeof(unsigned) * this->channel_partptr[c].size();
+            size_t channel_packets_size = sizeof(packet_t) * this->channel_packets[c].size();
             // std::cout << "channel_packets_size: " << channel_packets_size << std::endl;
             #ifdef USE_DDR_CHANNEL
             if (channel_packets_size / 1024 / 1024 >= 4 * 1024) {
@@ -391,18 +358,6 @@ private:
                 channel_packets_ext[c],
                 err
             );
-            this->channel_indptr_buf[c] = CL_BUFFER_RDONLY(
-                runtime.context,
-                sizeof(IDX_T) * (this->num_cols_each_channel[c] + 1) * this->num_row_partitions,
-                channel_indptr_ext[c],
-                err
-            );
-            this->channel_partptr_buf[c] = CL_BUFFER_RDONLY(
-                runtime.context,
-                sizeof(IDX_T) * (this->num_row_partitions + 1),
-                channel_partptr_ext[c],
-                err
-            );
             if (err != CL_SUCCESS) {
                 std::cout << "ERROR : exception catched when trying to create CL buffer of "
                 #ifdef USE_DDR_CHANNEL
@@ -427,9 +382,7 @@ private:
         // transfer data
         for (size_t c = 0; c < num_hbm_channels; c++) {
             OCL_CHECK(err, err = runtime.command_queue.enqueueMigrateMemObjects({
-                channel_packets_buf[c],
-                channel_indptr_buf[c],
-                channel_partptr_buf[c]
+                channel_packets_buf[c]
                 }, 0 /* 0 means from host*/));
         }
         OCL_CHECK(err, err = runtime.command_queue.finish());
@@ -443,12 +396,10 @@ private:
         std::cout << " row_partitions: " << this->num_row_partitions << std::endl;
 
         for (size_t c = 0; c < num_hbm_channels; c++) {
-            OCL_CHECK(err, err = runtime.spmspv.setArg(0 + 3*c, channel_packets_buf[c]));
-            OCL_CHECK(err, err = runtime.spmspv.setArg(1 + 3*c, channel_indptr_buf[c]));
-            OCL_CHECK(err, err = runtime.spmspv.setArg(2 + 3*c, channel_partptr_buf[c]));
+            OCL_CHECK(err, err = runtime.spmspv.setArg(c, channel_packets_buf[c]));
         }
 
-        size_t arg_index_offset = 3*num_hbm_channels;
+        size_t arg_index_offset = num_hbm_channels;
         OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 1, result_buf));
         OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 2, this->csc_matrix.num_rows));
         OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 3, this->csc_matrix.num_cols));
@@ -509,7 +460,7 @@ private:
             {vector_buf}, 0 /* 0 means from host*/));
         OCL_CHECK(err, err = runtime.command_queue.finish());
 
-        size_t arg_index_offset = 3*num_hbm_channels;
+        size_t arg_index_offset = num_hbm_channels;
         OCL_CHECK(err, err = runtime.spmspv.setArg(arg_index_offset + 0, vector_buf));
 
         //--------------------------------------------------------------------
@@ -584,6 +535,8 @@ int main (int argc, char** argv) {
     test_harness test(name, dataset, num_channels);
     test.preprocessing(); // process in background thread
 
+    // setenv("XCL_EMULATION_MODE", "sw_emu", true);
+
     // setup Xilinx openCL runtime
     cl::Device device;
     bool found_device = false;
@@ -632,11 +585,10 @@ int main (int argc, char** argv) {
 
     // output benchmark results
     std::ofstream log(metric);
-    log << "[ ";
     size_t len = test.benchmark_results.size();
     for (size_t i = 0; i < len; ++i) {
         log << test.benchmark_results[i];
-        log << (i == len - 1 ? " ]" : ", ");
+        log << (i == len - 1 ? "\n" : ", ");
     }
     log.close();
 

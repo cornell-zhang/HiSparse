@@ -20,3 +20,10 @@ for ((i = 0; i < ${#GRAPH_DATASETS[@]}; i++)) do
     ./benchmark $name $GRAPH_DATASET_PATH/${GRAPH_DATASETS[i]} $bitstream $num_channels "./bmlogs/${name}.log"
 done
 
+JQ=jq
+if ! [ -x "$(command -v jq)" ]; then
+  wget -q https://github.com/stedolan/jq/releases/latest/download/jq-linux64 -O ./jq
+  chmod +x ./jq
+  JQ=./jq
+fi
+$JQ -n '[ inputs ]' bmlogs/*.log 2>&1 | tee ./result_$(date +%Y%m%d%H%M%S).json

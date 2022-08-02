@@ -564,6 +564,8 @@ struct FormattedCSCMatrix {
     uint32_t num_cols;
     /*! \brief The number of partitions along the row dimension */
     uint32_t num_row_partitions;
+    /*! \brief The number of columns */
+    uint32_t packet_size;
 
     std::vector<MatrixPacketT> formatted_adj_packet;
     std::vector<uint32_t> formatted_adj_indptr;
@@ -605,6 +607,43 @@ struct FormattedCSCMatrix {
         }
         return channel_partptr;
     }
+
+    /*!
+     * \brief get fused matrix packet with adj_packet, indptr and partptr
+     */
+    template<typename DataT>
+    std::vector<MatrixPacketT, aligned_allocator<MatrixPacketT>> get_fused_matrix() {
+        size_t indptr_size = (this->num_cols + 1) * this->num_row_partitions;
+        size_t partptr_size = this->num_row_partitions;
+
+        size_t adj_packet_size = this->formatted_adj_packet.size();
+        size_t indptr_packet_size = (indptr_size + this->packet_size - 1) / this->packet_size;
+        size_t partptr_packet_size = (partptr_size + this->packet_size - 1) / this->packet_size;
+
+        std::vector<MatrixPacketT, aligned_allocator<MatrixPacketT>> channel;
+        channel.resize(adj_packet_size + indptr_size); // partptr size <= indptr
+
+        // padding the indptr and partptr packet
+        this->formatted_adj_indptr.resize(indptr_packet_size * this->packet_size);
+        this->formatted_adj_partptr.resize(partptr_packet_size * this->packet_size);
+
+        for (size_t i = 0, cnt = 0; i < indptr_packet_size; i++) {
+            for (size_t j = 0; j < this->packet_size; j++, cnt++) {
+                DataT tmp; // store uint32 as raw bits to val_t (i.e. ap_ufixed)
+                tmp(31,0) = ap_uint<32>(this->formatted_adj_indptr[cnt])(31,0);
+                channel[i].vals[j] = tmp;
+            }
+        }
+        for (size_t i = 0, cnt = 0; i < partptr_packet_size; i++) {
+            for (size_t j = 0; j < this->packet_size; j++, cnt++) {
+                channel[i].indices[j] = this->formatted_adj_partptr[cnt] + indptr_size;
+            }
+        }
+        for (size_t i = 0; i < adj_packet_size; i++) {
+            channel[i + indptr_size] = this->formatted_adj_packet[i];
+        }
+        return channel;
+    }
 };
 
 
@@ -631,6 +670,7 @@ FormattedCSCMatrix<MatrixPacketT> formatCSC(CSCMatrix<DataT> const &csc_matrix,
         exit(EXIT_FAILURE);
     }
     FormattedCSCMatrix<MatrixPacketT> formatted_matrix;
+    formatted_matrix.packet_size = pack_size;
     formatted_matrix.num_cols = csc_matrix.num_cols;
     formatted_matrix.num_row_partitions = (csc_matrix.num_rows + out_buf_len - 1) / out_buf_len;
     formatted_matrix.formatted_adj_packet.clear();
