@@ -13,13 +13,9 @@ EOF
 if [ $1 = "DDR" ];then
 cat <<EOF >> spmspv.ini
 sp=spmspv_1.mat_0:DDR[0]
-sp=spmspv_1.mat_indptr_0:DDR[0]
-sp=spmspv_1.mat_partptr_0:DDR[0]
 EOF
 elif [ "$1" = "HBM" ];then
   for (( i = 0; i < $2; i++ )); do
     echo "sp=spmspv_1.mat_$i:HBM[$i]" >> $hw_config
-    echo "sp=spmspv_1.mat_indptr_$i:HBM[$i]" >> $hw_config
-    echo "sp=spmspv_1.mat_partptr_$i:HBM[$i]" >> $hw_config
   done
 fi
