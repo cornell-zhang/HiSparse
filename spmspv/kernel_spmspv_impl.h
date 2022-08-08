@@ -247,7 +247,7 @@ static void write_back_results (
                     nnz_cnt++;
                     // notify the burst writer if we have a whole batch
                     if (batch_counter == WB_BURST_LEN - 1) {
-                        memcpy(burst_buf, &res_out[nnz_cnt - WB_BURST_LEN + 1], WB_BURST_LEN * sizeof(IDX_VAL_T));
+                        memcpy(&res_out[nnz_cnt - WB_BURST_LEN + 1], burst_buf, WB_BURST_LEN * sizeof(IDX_VAL_T));
                         batch_counter = 0;
                     } else {
                         batch_counter++;
@@ -272,7 +272,7 @@ static void write_back_results (
 
     // handle the reminder (if any)
     if (batch_counter != 0) {
-        memcpy(burst_buf, &res_out[nnz_cnt - batch_counter + 1], batch_counter * sizeof(IDX_VAL_T));
+        memcpy(&res_out[nnz_cnt - batch_counter + 1], burst_buf, batch_counter * sizeof(IDX_VAL_T));
     }
 
     // // denote the end of transaction
