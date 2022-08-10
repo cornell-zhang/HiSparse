@@ -56,13 +56,16 @@ static void load_vector_from_gmem(
 
 // data loader for SpMSpV from one HBM channel
 static void load_matrix_from_gmem(
-    // matrix data, row_id, indptr, partptr
+    // |--partptr--|--indptr--|--matrix data--|
     const SPMSPV_MAT_PKT_T *matrix,
-    // partition base
+    // base addr inside indptr field, for certain partition
     IDX_T mat_indptr_base,
+    // base addr inside matrix data field, for certain partition
     IDX_T mat_row_id_base,
     // current part id
     IDX_T part_id,
+    // indptr offset over matrix pkts
+    IDX_T mat_indptr_offset,
     // fifos
     hls::stream<IDX_VAL_INST_T> &VL_to_ML_stream,
     hls::stream<INST_T> &DL_to_MG_inst,
@@ -70,10 +73,12 @@ static void load_matrix_from_gmem(
 ) {
     bool exit = false;
 
-    // CSC part pointers start from 0 in `matrix` indices field
-    IDX_T partptr_pack_idx = part_id / PACK_SIZE;
-    IDX_T partptr_pack_pos = part_id % PACK_SIZE;
-    IDX_T mat_data_addr_base = matrix[partptr_pack_idx].indices.data[partptr_pack_pos];
+    // CSC part pointers start from 0
+    IDX_T partptr_pack_idx = part_id / (2 * PACK_SIZE);
+    IDX_T partptr_pack_pos = part_id % (2 * PACK_SIZE);
+    IDX_T mat_data_addr_base = partptr_pack_pos / PACK_SIZE ?
+        matrix[partptr_pack_idx].vals.data[partptr_pack_pos % PACK_SIZE](31,0) :
+        matrix[partptr_pack_idx].indices.data[partptr_pack_pos % PACK_SIZE];
 
     DL_to_MG_inst.write(SOD); // no need to fill `DL_to_MG_stream` with SOD anymore
 
@@ -98,10 +103,13 @@ static void load_matrix_from_gmem(
             for (unsigned int i = 0; i < 2; i++) {
                 #pragma HLS unroll
                 IDX_T raw_mat_indptr_idx = current_column_id + mat_indptr_base + i;
-                // CSC index pointers start from 0 in `matrix` vals (32b) field
-                IDX_T indptr_pack_idx = raw_mat_indptr_idx / PACK_SIZE;
-                IDX_T indptr_pack_pos = raw_mat_indptr_idx % PACK_SIZE;
-                col_slice[i] = matrix[indptr_pack_idx].vals.data[indptr_pack_pos](31,0);
+                // CSC index pointers start from `mat_indptr_offset`
+                IDX_T indptr_pack_idx = raw_mat_indptr_idx / (2 * PACK_SIZE);
+                IDX_T indptr_pack_pos = raw_mat_indptr_idx % (2 * PACK_SIZE);
+                SPMV_MAT_PKT_T pkt = matrix[mat_indptr_offset + indptr_pack_idx];
+                col_slice[i] = indptr_pack_pos / PACK_SIZE ?
+                    pkt.vals.data[indptr_pack_pos % PACK_SIZE](31,0) :
+                    pkt.indices.data[indptr_pack_pos % PACK_SIZE];
             }
 
             loop_over_pkts_ML:
@@ -403,6 +411,7 @@ static void spmspv_core(
     IDX_T mat_indptr_base_each_channel[SPMSPV_NUM_HBM_CHANNEL],
     IDX_T mat_row_id_base,
     IDX_T part_id,
+    IDX_T num_parts, // i.e., num_row_partitions, equals to partptr_size
     IDX_T &Nnz,
     // OP_T Op,
     // VAL_T Zero,
@@ -410,7 +419,6 @@ static void spmspv_core(
     const unsigned used_buf_len_per_pe
 ) {
     // fifos
-
     hls::stream<IDX_VAL_INST_T> VL_to_ML_stream[SPMSPV_NUM_HBM_CHANNEL];
     hls::stream<INST_T> ML_to_MG_inst[SPMSPV_NUM_HBM_CHANNEL];
     hls::stream<UPDATE_PLD_T> ML_to_MG_stream[SPMSPV_NUM_HBM_CHANNEL][PACK_SIZE];
@@ -444,6 +452,7 @@ load_matrix_from_gmem( \
     mat_indptr_base_each_channel[x], \
     mat_row_id_base, \
     part_id, \
+    (num_parts + 2 * PACK_SIZE - 1) / (2 * PACK_SIZE), \
     VL_to_ML_stream[x], \
     ML_to_MG_inst[x], \
     ML_to_MG_stream[x] \

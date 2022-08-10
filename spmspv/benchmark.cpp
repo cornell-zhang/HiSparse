@@ -11,7 +11,7 @@
 
 #include "xcl2.hpp"
 
-const unsigned NUM_RUNS = 50;
+const unsigned NUM_RUNS = 100;
 
 // device memory channels
 #define MAX_HBM_CHANNEL_COUNT 32
@@ -276,7 +276,6 @@ private:
 
     size_t num_hbm_channels;
     std::vector<aligned_packet_t> channel_packets;
-    std::vector<uint32_t> num_cols_each_channel;
     aligned_sparse_vec_t result;
     uint32_t num_row_partitions;
 
@@ -291,7 +290,6 @@ private:
     void format_matrix() {
         auto t0 = high_resolution_clock::now();
         this->channel_packets.resize(num_hbm_channels);
-        this->num_cols_each_channel.resize(num_hbm_channels);
 
         std::vector<CSCMatrix<VAL_T>> csc_matrices =
             ColumnCyclicSplitCSC<VAL_T>(this->csc_matrix, num_hbm_channels);
@@ -301,7 +299,6 @@ private:
                                                                    PACK_SIZE,
                                                                    SPMSPV_OUT_BUF_LEN);
             this->channel_packets[c] = formatted_csc_matrices[c].get_fused_matrix<VAL_T>();
-            this->num_cols_each_channel[c] = formatted_csc_matrices[c].num_cols;
         }
         this->num_row_partitions = formatted_csc_matrices[0].num_row_partitions;
 

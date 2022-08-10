@@ -33,27 +33,27 @@ void spmspv(
 
 /*----------------- arguments for SpMSpV -------------------*/
 #if (SPMSPV_NUM_HBM_CHANNEL >= 1)
-    #pragma HLS interface m_axi     port=mat_0    offset=slave bundle=spmspv_gmem0_0
+    #pragma HLS interface m_axi     port=mat_0    offset=slave bundle=spmspv_gmem0_0 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
     #pragma HLS interface s_axilite port=mat_0    bundle=control
 #endif
 
 #if (SPMSPV_NUM_HBM_CHANNEL >= 2)
-    #pragma HLS interface m_axi     port=mat_1    offset=slave bundle=spmspv_gmem0_1
+    #pragma HLS interface m_axi     port=mat_1    offset=slave bundle=spmspv_gmem0_1 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
     #pragma HLS interface s_axilite port=mat_1    bundle=control
 #endif
 
 #if (SPMSPV_NUM_HBM_CHANNEL >= 4)
-    #pragma HLS interface m_axi     port=mat_2    offset=slave bundle=spmspv_gmem0_2
-    #pragma HLS interface m_axi     port=mat_3    offset=slave bundle=spmspv_gmem0_3
+    #pragma HLS interface m_axi     port=mat_2    offset=slave bundle=spmspv_gmem0_2 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
+    #pragma HLS interface m_axi     port=mat_3    offset=slave bundle=spmspv_gmem0_3 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
     #pragma HLS interface s_axilite port=mat_2    bundle=control
     #pragma HLS interface s_axilite port=mat_3    bundle=control
 #endif
 
 #if (SPMSPV_NUM_HBM_CHANNEL >= 8)
-    #pragma HLS interface m_axi     port=mat_4    offset=slave bundle=spmspv_gmem0_4
-    #pragma HLS interface m_axi     port=mat_5    offset=slave bundle=spmspv_gmem0_5
-    #pragma HLS interface m_axi     port=mat_6    offset=slave bundle=spmspv_gmem0_6
-    #pragma HLS interface m_axi     port=mat_7    offset=slave bundle=spmspv_gmem0_7
+    #pragma HLS interface m_axi     port=mat_4    offset=slave bundle=spmspv_gmem0_4 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
+    #pragma HLS interface m_axi     port=mat_5    offset=slave bundle=spmspv_gmem0_5 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
+    #pragma HLS interface m_axi     port=mat_6    offset=slave bundle=spmspv_gmem0_6 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
+    #pragma HLS interface m_axi     port=mat_7    offset=slave bundle=spmspv_gmem0_7 max_read_burst_length=128 max_write_burst_length=2 num_write_outstanding=1
     #pragma HLS interface s_axilite port=mat_4    bundle=control
     #pragma HLS interface s_axilite port=mat_5    bundle=control
     #pragma HLS interface s_axilite port=mat_6    bundle=control
@@ -67,8 +67,8 @@ void spmspv(
     #pragma HLS interface s_axilite port=mat_9    bundle=control
 #endif
 
-    #pragma HLS interface m_axi     port=vector   offset=slave bundle=spmspv_gmem_vec
-    #pragma HLS interface m_axi     port=result   offset=slave bundle=spmspv_gmem_out
+    #pragma HLS interface m_axi     port=vector   offset=slave bundle=spmspv_gmem_vec max_read_burst_length=256 max_write_burst_length=2 num_write_outstanding=1
+    #pragma HLS interface m_axi     port=result   offset=slave bundle=spmspv_gmem_out max_read_burst_length=2 num_read_outstanding=1 max_write_burst_length=256 num_write_outstanding=12
 
     #pragma HLS interface s_axilite port=vector   bundle=control
     #pragma HLS interface s_axilite port=result   bundle=control
@@ -148,6 +148,7 @@ void spmspv(
             mat_indptr_base_each_channel,
             mat_row_id_base,
             part_id,
+            num_parts,
             result_Nnz,
             (num_rows_this_part + PACK_SIZE - 1) / PACK_SIZE
         );

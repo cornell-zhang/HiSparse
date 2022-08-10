@@ -616,31 +616,47 @@ struct FormattedCSCMatrix {
         size_t indptr_size = (this->num_cols + 1) * this->num_row_partitions;
         size_t partptr_size = this->num_row_partitions;
 
-        size_t adj_packet_size = this->formatted_adj_packet.size();
-        size_t indptr_packet_size = (indptr_size + this->packet_size - 1) / this->packet_size;
-        size_t partptr_packet_size = (partptr_size + this->packet_size - 1) / this->packet_size;
+        // |--partptr--|--indptr--|--matrix data--|
+        //       ^ data[16] ^            ^ vals.data[8] + indices.data[8]
+        const size_t meta_pack_size = 2 * this->packet_size;
+        size_t indptr_packet_length = (indptr_size + meta_pack_size - 1) / meta_pack_size;
+        size_t partptr_packet_length = (partptr_size + meta_pack_size - 1) / meta_pack_size;
+        size_t meta_packet_length = partptr_packet_length + indptr_packet_length;
+
+        size_t adj_packet_length = this->formatted_adj_packet.size();
 
         std::vector<MatrixPacketT, aligned_allocator<MatrixPacketT>> channel;
-        channel.resize(adj_packet_size + indptr_size); // partptr size <= indptr
+        channel.resize(meta_packet_length + adj_packet_length);
 
         // padding the indptr and partptr packet
-        this->formatted_adj_indptr.resize(indptr_packet_size * this->packet_size);
-        this->formatted_adj_partptr.resize(partptr_packet_size * this->packet_size);
+        this->formatted_adj_indptr.resize(indptr_packet_length * meta_pack_size);
+        this->formatted_adj_partptr.resize(partptr_packet_length * meta_pack_size);
 
-        for (size_t i = 0, cnt = 0; i < indptr_packet_size; i++) {
+        for (size_t i = 0, cnt = 0; i < partptr_packet_length; i++) {
+            for (size_t j = 0; j < this->packet_size; j++, cnt++) {
+                // `+ meta_packet_length` means adding the mat pkt data offset to partptr
+                channel[i].indices[j] = this->formatted_adj_partptr[cnt] + meta_packet_length;
+            }
             for (size_t j = 0; j < this->packet_size; j++, cnt++) {
                 DataT tmp; // store uint32 as raw bits to val_t (i.e. ap_ufixed)
-                tmp(31,0) = ap_uint<32>(this->formatted_adj_indptr[cnt])(31,0);
+                tmp(31,0) = ap_uint<32>(this->formatted_adj_partptr[cnt] + meta_packet_length)(31,0);
                 channel[i].vals[j] = tmp;
             }
         }
-        for (size_t i = 0, cnt = 0; i < partptr_packet_size; i++) {
+
+        for (size_t i = 0, cnt = 0; i < indptr_packet_length; i++) {
             for (size_t j = 0; j < this->packet_size; j++, cnt++) {
-                channel[i].indices[j] = this->formatted_adj_partptr[cnt] + indptr_size;
+                channel[i + partptr_packet_length].indices[j] = this->formatted_adj_indptr[cnt];
+            }
+            for (size_t j = 0; j < this->packet_size; j++, cnt++) {
+                DataT tmp; // store uint32 as raw bits to val_t (i.e. ap_ufixed)
+                tmp(31,0) = ap_uint<32>(this->formatted_adj_indptr[cnt])(31,0);
+                channel[i + partptr_packet_length].vals[j] = tmp;
             }
         }
-        for (size_t i = 0; i < adj_packet_size; i++) {
-            channel[i + indptr_size] = this->formatted_adj_packet[i];
+
+        for (size_t i = 0; i < adj_packet_length; i++) {
+            channel[i + meta_packet_length] = this->formatted_adj_packet[i];
         }
         return channel;
     }
