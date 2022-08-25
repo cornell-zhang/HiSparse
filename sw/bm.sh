@@ -1,12 +1,12 @@
 #!/bin/bash
 
 GRAPH_DATASET_PATH=../datasets/graph
-GRAPH_DATASETS=(gplus_108K_13M_csr_float32.npz
-                ogbl_ppa_576K_42M_csr_float32.npz
-                hollywood_1M_113M_csr_float32.npz
-                pokec_1633K_31M_csr_float32.npz
-                ogbn_products_2M_124M_csr_float32.npz
-                mouse_gene_45K_29M_csr_float32.npz)
+GRAPH_DATASETS=(gplus_108K_13M_csr_float32.npz)
+                # ogbl_ppa_576K_42M_csr_float32.npz
+                # hollywood_1M_113M_csr_float32.npz
+                # pokec_1633K_31M_csr_float32.npz
+                # ogbn_products_2M_124M_csr_float32.npz
+                # mouse_gene_45K_29M_csr_float32.npz)
 
 NN_DATASET_PATH=../datasets/pruned_nn
 NN_DATASETS=(transformer_50_512_33288_csr_float32.npz
@@ -30,6 +30,6 @@ for ((i = 0; i < ${#GRAPH_DATASETS[@]}; i++)) do
     ./benchmark $bitstream $GRAPH_DATASET_PATH/${GRAPH_DATASETS[i]} $vb $ob
 done
 
-for ((i = 0; i < ${#NN_DATASETS[@]}; i++)) do
-    ./benchmark $bitstream $NN_DATASET_PATH/${NN_DATASETS[i]} $vb $ob
-done
+# for ((i = 0; i < ${#NN_DATASETS[@]}; i++)) do
+#     ./benchmark $bitstream $NN_DATASET_PATH/${NN_DATASETS[i]} $vb $ob
+# done

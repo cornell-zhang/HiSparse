@@ -26,7 +26,7 @@ const int DDR[2] = {CHANNEL_NAME(32), CHANNEL_NAME(33)};
 template<typename T>
 using aligned_vector = std::vector<T, aligned_allocator<T> >;
 
-const unsigned NUM_RUNS = 50;
+const unsigned NUM_RUNS = 100;
 
 //---------------------------------------------------------------
 // benchmark utils

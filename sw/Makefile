@@ -60,7 +60,7 @@ hw_emu: host $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 	./host hw_emu $(HW_DIR)/build_dir.hw_emu/spmv.xclbin
 
 hw: host $(HW_DIR)/build_dir.hw/spmv.xclbin
-	./host hw $(HW_DIR)/build_dir.hw/spmv.xclbin
+# ./host hw $(HW_DIR)/build_dir.hw/spmv.xclbin
 
 .PHONY: clean cleanall
 clean:

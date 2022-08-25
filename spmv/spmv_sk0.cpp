@@ -22,10 +22,10 @@ void spmv_sk0(
     const unsigned num_col_partitions,        // in
     const unsigned num_partitions             // in
 ) {
-    #pragma HLS interface m_axi port=matrix_hbm_0 offset=slave bundle=spmv_mat0
-    #pragma HLS interface m_axi port=matrix_hbm_1 offset=slave bundle=spmv_mat1
-    #pragma HLS interface m_axi port=matrix_hbm_2 offset=slave bundle=spmv_mat2
-    #pragma HLS interface m_axi port=matrix_hbm_3 offset=slave bundle=spmv_mat3
+    #pragma HLS interface m_axi port=matrix_hbm_0 offset=slave bundle=spmv_mat0 num_read_outstanding=10 max_read_burst_length=64
+    #pragma HLS interface m_axi port=matrix_hbm_1 offset=slave bundle=spmv_mat1 num_read_outstanding=10 max_read_burst_length=64
+    #pragma HLS interface m_axi port=matrix_hbm_2 offset=slave bundle=spmv_mat2 num_read_outstanding=10 max_read_burst_length=64
+    #pragma HLS interface m_axi port=matrix_hbm_3 offset=slave bundle=spmv_mat3 num_read_outstanding=10 max_read_burst_length=64
     #pragma HLS interface s_axilite port=matrix_hbm_0 bundle=control
     #pragma HLS interface s_axilite port=matrix_hbm_1 bundle=control
     #pragma HLS interface s_axilite port=matrix_hbm_2 bundle=control

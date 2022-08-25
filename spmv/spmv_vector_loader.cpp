@@ -100,7 +100,7 @@ void spmv_vector_loader(
     hls::stream<VEC_AXIS_T> &to_SLR1,                      // out
     hls::stream<VEC_AXIS_T> &to_SLR2                       // out
 ) {
-    #pragma HLS interface m_axi port=packed_dense_vector offset=slave bundle=spmv_vin
+    #pragma HLS interface m_axi port=packed_dense_vector offset=slave bundle=spmv_vin num_read_outstanding=16 max_read_burst_length=128
     #pragma HLS interface s_axilite port=packed_dense_vector bundle=control
     #pragma HLS interface s_axilite port=num_cols bundle=control
     #pragma HLS interface s_axilite port=return bundle=control

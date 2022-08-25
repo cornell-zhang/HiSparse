@@ -424,16 +424,26 @@ private:
         for (size_t i = 0; i < vector_nnz_cnt; i++) {
             vector_float[i].val = (float)(rand() % 10) / 10;
             // vector_float[i].index = i * vector_indices_increment;
+
+            // generate random row indices
             while (true) {
+                // roll an index
                 IDX_T x = rand() % this->csc_matrix.num_cols;
+                // check if it's in use
+                bool duplicate = false;
                 for (size_t j = 0; j < used_indices.size(); j++) {
-                    if (x == used_indices[j]) { //! TODO: FIX THIS BUG!
-                        break; //! we need to reroll the index, not break
+                    if (x == used_indices[j]) {
+                        duplicate = true;
+                        break;
                     }
                 }
-                used_indices.push_back(x);
-                vector_float[i].index = x;
-                break;
+                // if not in use, pick it
+                if (!duplicate) {
+                    used_indices.push_back(x);
+                    vector_float[i].index = x;
+                    break;
+                }
+                // otherwise, we re-roll
             }
         }
         IDX_FLOAT_T vector_head;
@@ -531,8 +541,8 @@ private:
     }
 };
 
-// std::vector<float> test_sparsity = { 0.50, 0.90, 0.990, 0.995, 0.999, 0.9995, 0.9999 };
-std::vector<float> test_sparsity = {0.990};
+std::vector<float> test_sparsity = { 0.50, 0.90, 0.990, 0.995, 0.999, 0.9995, 0.9999 };
+// std::vector<float> test_sparsity = {0.990};
 
 //---------------------------------------------------------------
 // main
