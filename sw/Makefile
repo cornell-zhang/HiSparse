@@ -22,6 +22,13 @@ LDFLAGS += -L$(CNPY_LIB) -lcnpy
 
 CXXFLAGS += -I$(PROJ_ROOT)/sw
 CXXFLAGS += -I$(LIBFPGA_DIR)
+CXXFLAGS += -I$(HLS_INCLUDE)
+
+.PHONY: check_hls_include
+check_hls_include:
+ifndef HLS_INCLUDE
+	$(error HLS_INCLUDE is not set, please set it to the path to ap_fixed.h)
+endif
 
 include $(PROJ_ROOT)/xrt/includes/xcl2/xcl2.mk
 CXXFLAGS += $(xcl2_CXXFLAGS)
