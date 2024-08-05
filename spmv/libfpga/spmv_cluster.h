@@ -220,7 +220,7 @@ void spmv_cluster(
     #pragma HLS bind_storage variable=ML2SF   type=FIFO impl=SRL
     #pragma HLS bind_storage variable=SF2VAU  type=FIFO impl=SRL
     #pragma HLS bind_storage variable=VAU2SF  type=FIFO impl=SRL
-    #pragma HLS bind_storage variable=FS2PE   type=FIFO impl=SRL
+    #pragma HLS bind_storage variable=SF2PE   type=FIFO impl=SRL
     #pragma HLS bind_storage variable=PE2PK   type=FIFO impl=SRL
     #pragma HLS bind_storage variable=UPK2VAU type=FIFO impl=SRL
 
